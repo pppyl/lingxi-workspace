@@ -37,15 +37,13 @@ def download(url,path):
 def main():
     cache=ROOT/'.build/runtime-cache';cache.mkdir(parents=True,exist_ok=True)
     lock_file=ROOT/'build_tools/runtime-lock.json'
-    if lock_file.exists():runtime=json.loads(lock_file.read_text('utf-8'))
+    if lock_file.exists():runtime={'node':json.loads(lock_file.read_text('utf-8'))['node']}
     else:
-        chrome=fetch_json('https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json')['channels']['Stable']
         node=next(item for item in fetch_json('https://nodejs.org/dist/index.json') if item['version'].startswith('v24.') and item['lts'])
         node_name=f'node-{node["version"]}-win-x64.zip'
         with urlopen(f'https://nodejs.org/dist/{node["version"]}/SHASUMS256.txt',timeout=30) as response:checksums=response.read().decode()
         node_sha=next(line.split()[0] for line in checksums.splitlines() if line.endswith('  '+node_name))
-        runtime={'chrome':{'version':chrome['version'],'url':next(item['url'] for item in chrome['downloads']['chrome'] if item['platform']=='win64')},
-                 'node':{'version':node['version'],'url':f'https://nodejs.org/dist/{node["version"]}/{node_name}','sha256':node_sha}}
+        runtime={'node':{'version':node['version'],'url':f'https://nodejs.org/dist/{node["version"]}/{node_name}','sha256':node_sha}}
     extracted={}
     for name,item in runtime.items():
         archive=cache/(name+'-'+item['version']+'.zip');download(item['url'],archive)
@@ -83,7 +81,7 @@ def main():
         (ROOT/'recharge/static','recharge/static'),(ROOT/'recharge/templates','recharge/templates'),
         (ROOT/'recharge/browser_bridge.mjs','recharge'),(ROOT/'recharge/package.json','recharge'),
         (ROOT/'recharge/node_modules/playwright-core','recharge/node_modules/playwright-core'),
-        (notice_dir,'third-party-notices'),(extracted['chrome'],'runtime/chrome')]
+        (notice_dir,'third-party-notices')]
     for source,dest in resources:command+=['--add-data',str(source)+':'+dest]
     command+=['--add-data',str(extracted['node']/'node.exe')+':runtime/node',str(ROOT/'desktop.py')]
     if '--single-file-only' not in sys.argv:subprocess.run(command,cwd=ROOT,check=True)
@@ -97,6 +95,7 @@ def main():
     for path in files:
         if forbidden.intersection(path.relative_to(package).parts) or path.suffix in {'.sqlite3','.log','.db'}:
             raise RuntimeError('Private runtime data in package: '+str(path.relative_to(package)))
+        if path.name.lower() in {'chrome.exe','msedge.exe'}:raise RuntimeError('Browser must not be bundled in this release')
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as output:
         for path in files:output.write(path,Path('LingxiWorkspace')/path.relative_to(package))
     command[command.index('--onedir')]='--onefile'

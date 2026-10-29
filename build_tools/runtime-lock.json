@@ -1,9 +1,4 @@
 {
-  "chrome": {
-    "version": "156.0.8078.73",
-    "url": "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chrome-win64.zip",
-    "sha256": "5db0ad4c070907a791ec895b9de5ed15334b27f79af2556a131c3c11b3913a2b"
-  },
   "node": {
     "version": "v24.22.2",
     "url": "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",

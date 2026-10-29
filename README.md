@@ -4,9 +4,9 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 ## Windows 客户端下载
 
-无需安装 Python、Node.js 或 Chrome，直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 Windows x64 单文件版 EXE，双击运行，可直接转发给其他人。也提供 ZIP 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
+直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 Windows x64 单文件版 EXE，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 ZIP 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
 
-关闭窗口后客户端留在托盘继续执行定时任务，右键托盘图标可退出。账号及任务保存在 `%LOCALAPPDATA%\LingxiWorkspace`，与程序文件分离，升级无需搬运账号库。首次使用登录自己的手机号。详细说明见 [DESKTOP.md](DESKTOP.md)。
+关闭标签页后客户端留在托盘继续执行定时任务，再次运行时复用已打开的页面，右键托盘图标可退出。启动时确认本地页面可访问后才打开浏览器；客户端 Cookie 名称与源码网页服务分离。账号及任务保存在 `%LOCALAPPDATA%\LingxiWorkspace`，与程序文件分离，升级无需搬运账号库。更新前先退出旧版本，首次使用登录自己的手机号。详细说明见 [DESKTOP.md](DESKTOP.md)。
 
 从源代码构建：Windows x64 安装 Python 3.12 与 Node.js，执行 `pip install -r requirements-desktop.txt`、`npm ci --prefix recharge`，再运行 `python build_tools/build_windows.py`。构建脚本只收集列出的资源，不包含 `.local`、开发账号库或测试数据。产物位于 `release/`，外部运行时版本及校验和记录于 `build_tools/runtime-lock.json`。
 
@@ -128,7 +128,7 @@ node --test tests/test_task_model.mjs
 node --test tests/test_lingxi_task_model.mjs
 ```
 
-187 项 Python 回归测试覆盖登录、重新登录保持账号绑定、验证码重试、凭据续期、并发队列、动态限额、设置持久化、最后有效回复、加密存储、定时发送间隔、批量停止后保留回复、批量删除事务回滚、重启不重发、批量调整、客户端数据隔离及两类任务隔离；22 项前端模型测试覆盖任务分类、筛选排序、北京时间和预约参数，包含 12 个账号批量预约、组合筛选、停止与删除状态限制、排队状态和批量调整保留未选字段的回归。
+190 项 Python 回归测试覆盖登录、重新登录保持账号绑定、验证码重试、凭据续期、并发队列、动态限额、设置持久化、最后有效回复、加密存储、定时发送间隔、批量停止后保留回复、批量删除事务回滚、重启不重发、批量调整、客户端数据隔离、启动就绪等待、重复打开复用及两类任务隔离；22 项前端模型测试覆盖任务分类、筛选排序、北京时间和预约参数，包含 12 个账号批量预约、组合筛选、停止与删除状态限制、排队状态和批量调整保留未选字段的回归。
 
 周三活动已实测 APP SSO、登录身份、本场资格、官方服务器时间和官方设备标识（device_ready=true），没有执行真实领取。统一账号池复用、同手机号短信去重、活动独立登录关闭、重复活动账号拦截、两模块退出同步以及定时任务使用模拟接口验证。
 

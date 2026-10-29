@@ -1,12 +1,17 @@
-# v1.0.0 · 本地工具台首个公开版本
+# v1.0.1 · 默认浏览器与启动修复
 
 ## Windows 客户端
 
-- 推荐下载单文件版 `LingxiWorkspace-1.0.0-Windows-x64.exe`，双击即可运行，可直接转发给其他人。
-- 也提供 `LingxiWorkspace-1.0.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`。
-- 内置 Python、Node.js 与独立浏览器，无需安装开发环境或连接手机。
+- 推荐下载单文件版 `LingxiWorkspace-1.0.1-Windows-x64.exe`，双击即可运行，可直接转发给其他人。
+- 也提供 `LingxiWorkspace-1.0.1-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`。
+- 移除内置 Chrome，直接使用系统默认浏览器，减少包体与首次解包开销，移除测试版提示条。
+- 确认本地页面就绪后才打开浏览器，修复首次启动时缺少就绪等待的问题。
+- 再次运行 EXE 或点击托盘时复用已有窗口，不重复创建后台或标签页。
+- 关闭标签页后仍在托盘执行任务；退出客户端不会关闭用户的浏览器。
+- 不需要安装 Python 或 Node.js，也不需要连接手机。
 - 关闭窗口后留在托盘继续运行，右键托盘图标可退出。
 - 用户数据保存在 `%LOCALAPPDATA%\LingxiWorkspace`，更新客户端保留数据。
+- 更新前请先退出 v1.0.0 的托盘程序，再运行 v1.0.1。
 
 ## 功能
 

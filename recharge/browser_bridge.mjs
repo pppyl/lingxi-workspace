@@ -1,6 +1,7 @@
 import { chromium } from 'playwright-core';
 import readline from 'node:readline';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 
 // One owned browser profile. No access to the user's ordinary Chrome profile.
 const origin = 'https://wx.10086.cn';
@@ -11,9 +12,21 @@ let page = null;
 let closing = false;
 let browserVisible = false;
 let ownedBrowser = null;
-const browserOptions = process.env.CMCC_BROWSER_EXECUTABLE
-  ? {executablePath:process.env.CMCC_BROWSER_EXECUTABLE}
-  : {channel:process.env.CMCC_BROWSER_CHANNEL || 'chrome'};
+function browserOptions() {
+  if(process.env.CMCC_BROWSER_EXECUTABLE)return {executablePath:process.env.CMCC_BROWSER_EXECUTABLE};
+  if(process.env.CMCC_BROWSER_CHANNEL)return {channel:process.env.CMCC_BROWSER_CHANNEL};
+  if(process.platform!=='win32')return {channel:'chrome'};
+  const locations=[
+    [process.env.PROGRAMFILES,'Google/Chrome/Application/chrome.exe'],
+    [process.env.LOCALAPPDATA,'Google/Chrome/Application/chrome.exe'],
+    [process.env['PROGRAMFILES(X86)'],'Google/Chrome/Application/chrome.exe'],
+    [process.env['PROGRAMFILES(X86)'],'Microsoft/Edge/Application/msedge.exe'],
+    [process.env.PROGRAMFILES,'Microsoft/Edge/Application/msedge.exe'],
+  ];
+  const executable=locations.filter(([base])=>base).map(([base,file])=>path.join(base,file)).find(existsSync);
+  if(!executable)throw new Error('周三活动需要本机安装 Microsoft Edge 或 Google Chrome。');
+  return {executablePath:executable};
+}
 
 async function closeContext() {
   if (context) await context.close();
@@ -26,7 +39,7 @@ async function appSession({cookies, user_agent}) {
     throw new Error('APP 活动 Cookie 域名无效');
   }
   await closeContext();
-  ownedBrowser = await chromium.launch({...browserOptions, headless: true});
+  ownedBrowser = await chromium.launch({...browserOptions(), headless: true});
   context = await ownedBrowser.newContext({userAgent: user_agent, viewport: {width: 460, height: 900},
     locale: 'zh-CN', timezoneId: 'Asia/Shanghai', acceptDownloads: false});
   browserVisible = false;
@@ -51,7 +64,7 @@ async function openBrowser({ url, visible = true, login = true }) {
   if (context && visible && !browserVisible) await context.close();
   if (!context) {
     context = await chromium.launchPersistentContext(path.resolve(process.env.CMCC_PROFILE_DIR || '.local/browser-profile'), {
-      ...browserOptions,
+      ...browserOptions(),
       headless: !visible,
       viewport: { width: 460, height: 900 },
       locale: 'zh-CN', timezoneId: 'Asia/Shanghai',

@@ -1,6 +1,7 @@
-"""Windows desktop entry: bundled browser, loopback service and notification tray."""
+"""Windows desktop entry: default browser, loopback service and notification tray."""
 from __future__ import annotations
 import argparse
+import ctypes
 import hmac
 import json
 import logging
@@ -10,8 +11,6 @@ import os
 from pathlib import Path
 import secrets
 import socket
-import subprocess
-import sys
 import threading
 from urllib.request import Request,urlopen
 
@@ -40,32 +39,53 @@ def main():
     lock.seek(0);lock.write(b'1');lock.flush();lock.seek(0)
     try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
     except OSError:
+        if json.loads(control_file.read_text('utf-8')).get('version')!=VERSION:
+            ctypes.windll.user32.MessageBoxW(None,'请先从托盘退出旧版本客户端，再运行新版本。账号和任务会保留。','本地工具台',0x40)
+            return
         running_command('open');return
     handler=RotatingFileHandler(DATA_DIR/'desktop.log',maxBytes=2*1024*1024,backupCount=2,encoding='utf-8')
     logging.basicConfig(handlers=[handler],level=logging.WARNING)
-    browser=ROOT/'runtime/chrome/chrome.exe'
     os.environ['CMCC_NODE_PATH']=str(ROOT/'runtime/node/node.exe')
-    os.environ['CMCC_BROWSER_EXECUTABLE']=str(browser)
-    if not browser.is_file() or not Path(os.environ['CMCC_NODE_PATH']).is_file():
+    if not Path(os.environ['CMCC_NODE_PATH']).is_file():
         raise RuntimeError('客户端运行组件缺失，请完整解压 ZIP 后启动，不要单独移动 EXE。')
     from app import app
-    from flask import jsonify,request
+    app.config['SESSION_COOKIE_NAME']='lingxi_desktop_session'
+    app.extensions['recharge_app'].config['SESSION_COOKIE_NAME']='lingxi_desktop_recharge_session'
+    from flask import Response,jsonify,request
     from waitress import create_server
-    quit_event=threading.Event();browser_processes=[];token=secrets.token_urlsafe(32)
+    from desktop_browser import DefaultBrowserWindow,wait_for_page
+    quit_event=threading.Event();token=secrets.token_urlsafe(32);icon=None
     port=options.port
     if port:
         with socket.socket() as probe:
             if probe.connect_ex(('127.0.0.1',port))==0:port=0
     server=create_server(app,host='127.0.0.1',port=port,threads=32,channel_timeout=240)
-    port=server.effective_port;url=f'http://127.0.0.1:{port}/'
+    port=server.effective_port;url=f'http://127.0.0.1:{port}/?desktop=1'
+    window=DefaultBrowserWindow(url)
 
     def open_window(*_):
         if options.headless:return
-        browser_processes.append(subprocess.Popen([str(browser),'--app='+url,
-            '--user-data-dir='+str(DATA_DIR/'window-profile'),'--no-first-run',
-            '--no-default-browser-check','--disable-background-mode','--window-size=1480,960'],
-            stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW))
+        window.open()
+
+    @app.get('/_desktop/window-events')
+    def window_events():
+        client_id=request.args.get('id','')
+        if len(client_id)!=32 or any(char not in '0123456789abcdef' for char in client_id):
+            return jsonify(error='窗口标识无效'),400
+        def events():
+            window.attach(client_id);revision=window.focus_revision
+            try:
+                yield 'data: '+json.dumps({'focus':revision})+'\n\n'
+                while not quit_event.is_set():
+                    with window.condition:
+                        window.condition.wait(timeout=10);revision=window.focus_revision
+                    yield 'data: '+json.dumps({'focus':revision})+'\n\n'
+            finally:window.detach(client_id)
+        return Response(events(),mimetype='text/event-stream')
+
+    @app.post('/_desktop/window-closed')
+    def window_closed():
+        window.detach(request.get_json().get('id'));return jsonify(ok=True)
 
     @app.post('/_desktop/<command>')
     def desktop_command(command):
@@ -77,15 +97,16 @@ def main():
         return jsonify(ok=True)
 
     @app.get('/_desktop/info')
-    def desktop_info():return jsonify(product='lingxi-workspace',version=VERSION,tray=bool(icon and icon.visible))
+    def desktop_info():return jsonify(product='lingxi-workspace',version=VERSION,tray=bool(icon and icon.visible),
+                                      browser='system-default',window_clients=len(window.clients),opens=window.opens)
 
     instance={'pid':os.getpid(),'port':port,'token':token,'version':VERSION}
     control_file.write_text(json.dumps(instance),'utf-8')
     threading.Thread(target=server.run,daemon=True,name='desktop-http').start()
+    wait_for_page(url)
     app.extensions['session_maintenance'].start()
     app.extensions['lingxi_scheduler'].start()
     app.extensions['recharge_app'].extensions['scheduler'].start()
-    icon=None
     try:
         if options.headless:quit_event.wait()
         else:
@@ -106,8 +127,6 @@ def main():
         app.extensions['lingxi_scheduler'].shutdown()
         app.extensions['recharge_app'].extensions['scheduler'].stop()
         server.close()
-        for process in browser_processes:
-            if process.poll() is None:process.terminate()
         control_file.unlink(missing_ok=True)
         lock.close()
 

@@ -2,6 +2,8 @@
   'use strict';
   const page = document.body.dataset.workspace;
   if (!page) return;
+  if(new URLSearchParams(location.search).get('desktop')==='1')sessionStorage.setItem('desktop-client','1');
+  if(sessionStorage.getItem('desktop-client')==='1')import('/static/desktop-window.js');
   const favicon=document.querySelector('link[rel="icon"]')||document.createElement('link');
   favicon.rel='icon';favicon.href='/favicon.ico';document.head.append(favicon);
   const paths = {

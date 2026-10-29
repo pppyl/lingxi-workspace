@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 ROOT=Path(__file__).resolve().parents[1]
 OWNER='pppyl'
 NAME='lingxi-workspace'
-VERSION='1.0.0'
+VERSION='1.0.1'
 
 
 def main():
