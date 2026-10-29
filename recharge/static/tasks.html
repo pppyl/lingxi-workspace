@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>定时任务管理 · 周三充值日</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="tasks.css">
+  <link rel="stylesheet" href="/static/workspace.css">
+  <script src="tasks.js" type="module"></script>
+  <script src="/static/account-window.js" defer></script>
+  <script src="/static/workspace.js" defer></script>
+</head>
+<body class="workspace-app" data-workspace="recharge-tasks">
+<div class="task-shell">
+  <header class="topbar">
+    <a class="brand" href="../"><span class="brand-mark">三</span><span>周三充值日<small>定时任务管理</small></span></a>
+    <nav aria-label="页面导航"><a href="/">功能中心</a><a href="../">返回活动</a><button class="quiet" data-account-window>账号管理</button></nav>
+  </header>
+  <main>
+    <section class="page-heading">
+      <div><h1>充值日领取任务</h1><p>集中查看所有账号的预约、进度和执行记录。</p></div>
+      <div class="heading-actions"><span id="sync-status" class="sync-status" role="status">正在连接本地服务…</span><button id="refresh-tasks" class="secondary">↻ 刷新列表</button><button class="primary" id="new-task-button" type="button">＋ 新建预约</button></div>
+    </section>
+
+    <section class="stats" aria-label="按任务状态筛选">
+      <button class="stat active" data-filter="all" aria-pressed="true"><span>全部任务</span><strong id="count-all">—</strong><small>已提交的账号任务</small></button>
+      <button class="stat" data-filter="scheduled" aria-pressed="false"><span><i class="dot green"></i>待执行</span><strong id="count-scheduled">—</strong><small>等待下次预约时间</small></button>
+      <button class="stat" data-filter="running" aria-pressed="false"><span><i class="dot amber"></i>执行中</span><strong id="count-running">—</strong><small>准备、等待到点或领取中</small></button>
+      <button class="stat" data-filter="attention" aria-pressed="false"><span><i class="dot red"></i>需处理</span><strong id="count-attention">—</strong><small>登录、失败或中断</small></button>
+      <button class="stat" data-filter="ended" aria-pressed="false"><span><i class="dot gray"></i>已结束</span><strong id="count-ended">—</strong><small>成功、停止或尝试完毕</small></button>
+    </section>
+
+    <section id="next-task" class="next-task" aria-label="最近预约"><div><span class="next-label">最近预约 · 北京时间</span><strong id="next-time">正在读取…</strong></div><p id="next-description">所有任务由本地服务按预约执行</p><span class="next-symbol" aria-hidden="true">↗</span></section>
+    <div id="connection-error" class="notice error" role="alert" hidden></div>
+    <div id="storage-warning" class="notice" role="alert" hidden></div>
+
+    <section class="list-panel" aria-labelledby="list-heading">
+      <div class="list-heading"><div><h2 id="list-heading">任务列表 <span id="visible-count"></span></h2><p>每个账号保留一个任务；每周重复的任务会显示下次执行时间。</p></div><label class="search"><span aria-hidden="true">⌕</span><input id="task-search" type="search" placeholder="搜索账号、手机号或状态" aria-label="搜索任务"></label></div>
+      <div class="list-toolbar"><div class="filter-tabs" role="group" aria-label="任务筛选"><button data-filter="all" aria-pressed="true" class="active">全部</button><button data-filter="scheduled" aria-pressed="false">待执行</button><button data-filter="running" aria-pressed="false">执行中</button><button data-filter="attention" aria-pressed="false">需处理</button><button data-filter="ended" aria-pressed="false">已结束</button></div><label class="sort-label">排序<select id="task-sort"><option value="next">执行时间优先</option><option value="updated">最近更新优先</option><option value="name">账号名称</option></select></label></div>
+      <div class="selection-bar"><label><input id="select-visible" type="checkbox">选择当前结果中可停止的任务</label><div><span id="selection-count">已选 0 项</span><button class="danger-outline" id="stop-selected" disabled>停止所选</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th class="check-column"><span class="sr-only">选择</span></th><th>执行账号</th><th>当前状态</th><th>执行计划 · 北京时间</th><th>执行进度</th><th>最近消息</th><th class="actions-column">操作</th></tr></thead><tbody id="task-rows"></tbody></table></div>
+      <div id="empty-state" class="empty-state" hidden><span aria-hidden="true">▦</span><h3 id="empty-title">还没有提交的任务</h3><p id="empty-message">选择活动账号，设置第一次预约。</p><button id="empty-create" class="secondary" type="button">新建预约 →</button></div>
+      <div id="loading-state" class="loading-state">正在读取已提交的任务…</div>
+      <div class="list-footer"><span id="last-sync">等待同步</span><span>自动刷新 · 执行中每秒更新</span></div>
+    </section>
+    <footer class="page-footer">请保持本地服务运行和电脑唤醒。账号从本机数据库自动恢复；若运营商拒绝旧凭据，需重新短信验证。</footer>
+  </main>
+</div>
+
+<dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-title">
+  <div class="dialog-heading"><div><span class="eyebrow">TASK DETAILS</span><h2 id="detail-title">任务详情</h2><p id="detail-account"></p></div><button type="button" class="icon-button" data-close="detail-dialog" aria-label="关闭任务详情">×</button></div>
+  <div id="detail-content"></div>
+  <div class="dialog-footer"><span>记录随任务自动更新</span><button class="secondary" type="button" data-close="detail-dialog">关闭</button></div>
+</dialog>
+
+<dialog id="edit-dialog" aria-labelledby="edit-title">
+  <form id="edit-form">
+    <div class="dialog-heading"><div><span class="eyebrow">SCHEDULE SETTINGS</span><h2 id="edit-title">调整预约</h2><p id="edit-account"></p></div><button class="icon-button" type="button" data-close="edit-dialog" aria-label="关闭预约设置">×</button></div>
+    <p class="form-hint" id="replace-notice">保存后替换此账号的原任务，执行计数和原记录会重置。</p>
+    <div id="create-account-field" class="create-account-field" hidden><div class="create-account-heading"><span>执行账号</span><label><input id="create-all" type="checkbox">全选可用账号</label></div><div id="create-account-list" class="create-account-list"></div></div>
+    <label class="field">执行时间（北京时间，未来的周三）<input id="edit-run-at" type="datetime-local" step="1" required></label>
+    <label class="weekly-field"><input id="edit-weekly" type="checkbox">每周三重复执行</label>
+    <details class="retry-settings"><summary>重试设置与立即执行</summary><div class="form-grid"><label class="field">最小间隔 / 秒<input id="edit-min" type="number" min="0.2" max="1" step="0.1" required></label><label class="field">最大间隔 / 秒<input id="edit-max" type="number" min="0.2" max="1" step="0.1" required></label><label class="field">最多尝试次数<input id="edit-attempts" type="number" min="1" max="20" step="1" required></label></div><p class="form-hint">成功即停；西藏、新疆按官方 10 点开放时间执行。</p><button id="run-now-task" class="secondary" type="button">立即执行所选账号</button></details>
+    <p id="edit-error" class="form-error" role="alert" hidden></p>
+    <div class="dialog-footer"><button type="button" class="secondary" data-close="edit-dialog">取消</button><button class="primary" id="save-task" type="submit">保存预约</button></div>
+  </form>
+</dialog>
+
+<dialog id="stop-dialog" aria-labelledby="stop-title">
+  <form id="stop-form"><div class="dialog-heading"><div><span class="eyebrow">STOP TASKS</span><h2 id="stop-title">停止任务</h2></div><button class="icon-button" type="button" data-close="stop-dialog" aria-label="关闭停止确认">×</button></div><p id="stop-description"></p><p class="form-hint">停止后不再发起后续尝试，也会关闭每周重复。已发送的请求仍会记录结果。</p><p id="stop-error" class="form-error" role="alert" hidden></p><div class="dialog-footer"><button class="secondary" type="button" data-close="stop-dialog">保留任务</button><button class="danger" id="confirm-stop" type="submit">确认停止</button></div></form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+<noscript>请启用 JavaScript 查看和管理任务。</noscript>
+</body>
+</html>

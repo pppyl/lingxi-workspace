@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN" data-api-base="{{ request.script_root }}" data-unified-login="{{ 'true' if unified_login else 'false' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>周三充值日</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% if unified_login %}<link rel="stylesheet" href="/static/workspace.css"><script src="/static/workspace.js" defer></script>{% endif %}
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  {% if unified_login %}<script src="/static/account-window.js" defer></script>{% endif %}
+</head>
+<body{% if unified_login %} class="workspace-app" data-workspace="recharge"{% endif %}>{{ activity_markup | safe }}<noscript>请启用 JavaScript 使用活动页面。</noscript></body>
+</html>

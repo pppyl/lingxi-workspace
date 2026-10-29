@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>灵犀 · 文字助手</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/workspace.css">
+  <script src="/static/account-window.js" defer></script>
+  <script src="/static/workspace.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="workspace-app" data-workspace="chat">
+ <div class="chat-layout">
+  <aside class="chat-accounts" aria-label="对话账号">
+    <div class="brand"><span class="mark">灵</span><div><strong>灵犀</strong><small>文字助手 · 本地版</small></div></div>
+    <button id="new-chat" class="secondary full">＋ 新对话</button>
+    <section class="login-box">
+      <h2>灵犀使用账号</h2>
+      <div id="account-state" class="status" role="status"><i></i><span>尚未选择账号</span></div>
+      <div id="chat-account" class="chat-account-picker">
+        <div id="chat-account-panel" class="chat-account-panel" role="region" aria-label="灵犀账号列表">
+          <div class="account-picker-heading"><p id="chat-account-count">正在读取账号…</p><button id="refresh-chat-accounts" class="portal-quiet" type="button">刷新状态</button></div>
+          <div class="account-picker-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="chat-account-search" type="search" autocomplete="off" placeholder="搜索备注或号码尾号" aria-label="搜索灵犀账号"></div>
+          <div id="chat-account-list" class="account-choice-list" role="list"><p class="account-choice-empty">正在读取账号…</p></div>
+        </div>
+      </div>
+      <button id="connect-account" type="button" class="secondary full" hidden>重新连接</button>
+      <p id="account-feedback" class="feedback" role="status"></p>
+    </section>
+  </aside>
+  <main class="chat-main">
+    <header><div><h1>与灵犀对话</h1><p>写下你的问题，回复将在这里逐步显示。</p></div><span class="tag">文字 / 流式接收</span></header>
+    <div id="messages" aria-live="polite" aria-relevant="additions text">
+      <div class="welcome" id="welcome"><span class="welcome-icon">✦</span><h2>有什么想问灵犀？</h2><p>先在左侧选择账号，再开始一段对话。</p></div>
+    </div>
+    <div id="chat-feedback" role="status"></div>
+    <form id="chat-form" class="composer"><label for="message" class="sr-only">发送给灵犀的文字</label><textarea id="message" placeholder="输入你想发送的文字…" rows="2" maxlength="8000"></textarea><div class="composer-bottom"><small>Enter 发送 · Shift + Enter 换行</small><div><button id="stop" type="button" class="secondary" hidden>停止接收</button><button id="send" type="submit" class="primary" disabled>发送 ↑</button></div></div></form>
+  </main>
+ </div>
+</body>
+</html>

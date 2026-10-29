@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>定时发送 · 灵犀</title><link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/lingxi-tasks.css">
+  <link rel="stylesheet" href="/static/workspace.css">
+  <script src="/static/account-window.js" defer></script>
+  <script src="/static/workspace.js" defer></script>
+  <script src="/static/lingxi-tasks.js" type="module"></script>
+</head>
+<body class="workspace-app" data-workspace="lingxi-tasks"><div class="shell">
+  <header class="topbar"><a class="brand" href="/lingxi"><span class="mark">灵</span><span>灵犀<small>定时发送</small></span></a><nav><a href="/">功能中心</a><a href="/lingxi">返回对话</a><button class="quiet" data-account-window>账号管理</button></nav></header>
+  <main>
+    <section class="heading"><div><h1>定时发送</h1><p>写好内容，在合适的时间发给灵犀。</p></div><div class="heading-actions"><button id="open-send-settings" class="secondary" type="button">发送设置</button><button id="create-task" class="primary">＋ 新建任务</button></div></section>
+    <div id="feedback" role="status" hidden></div>
+    <section class="list-panel" aria-label="定时发送任务">
+      <div class="list-toolbar"><div class="filters" role="group" aria-label="任务筛选"><button data-filter="all" class="selected" aria-pressed="true">全部 <span id="task-count">0</span></button><button data-filter="waiting" aria-pressed="false">待执行</button><button data-filter="active" aria-pressed="false">执行中</button><button data-filter="ended" aria-pressed="false">已结束</button></div><button id="refresh" class="quiet">↻ 刷新</button></div>
+      <div class="task-search-toolbar"><div class="task-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="task-search" type="search" aria-label="搜索任务" placeholder="搜索账号、号码尾号或发送内容" autocomplete="off"></div><select id="task-state-filter" aria-label="具体任务状态"><option value="">所有状态</option></select><button id="reset-task-filters" type="button" class="quiet" hidden>清除筛选</button><span id="filter-result-count" role="status"></span></div>
+      <div class="batch-toolbar"><label><input id="select-visible-tasks" type="checkbox">全选当前结果</label><div><span id="selected-task-count">已选 0 项</span><button id="clear-task-selection" class="quiet" type="button" hidden>取消选择</button><button id="batch-adjust" class="secondary" type="button" disabled>批量调整</button><button id="batch-stop" class="secondary" type="button" disabled>停止所选</button><button id="batch-delete" class="danger" type="button" disabled>删除所选</button></div></div>
+      <div class="task-table-wrap"><table class="task-table" aria-label="灵犀定时发送任务">
+        <colgroup><col class="col-select"><col class="col-account"><col class="col-status"><col class="col-content"><col class="col-plan"><col class="col-settings"><col class="col-progress"><col><col class="col-actions"></colgroup>
+        <thead><tr><th scope="col" aria-label="选择任务">选</th><th scope="col">使用账号</th><th scope="col">状态</th><th scope="col">发送内容</th><th scope="col">预约时间 · 北京时间</th><th scope="col">发送设置</th><th scope="col">执行进度</th><th scope="col">最后有效回复</th><th scope="col">操作</th></tr></thead>
+        <tbody id="tasks" aria-live="polite"><tr><td colspan="9" class="table-empty">正在读取任务…</td></tr></tbody>
+      </table></div>
+      <div class="list-footer"><span id="sync-state">北京时间 · 自动刷新</span><span id="send-runtime">并发 256 · 进行中 0 · 排队 0</span><a href="/recharge/static/tasks.html">充值日任务 →</a></div>
+    </section>
+    <p class="footnote">请保持本地服务运行、电脑唤醒。间隔按请求发起时间计算，每次分别保存回复。</p>
+  </main>
+</div>
+<dialog id="editor" aria-labelledby="editor-title"><form id="task-form">
+  <div class="dialog-heading"><div><h2 id="editor-title">新建定时发送</h2><p>使用共享账号，无需再次登录。</p></div><button type="button" class="close quiet" data-close="editor" aria-label="关闭">×</button></div>
+  <div class="account-picker-heading"><label class="field-label">使用账号 <small id="account-selection-hint">可多选</small></label><div id="account-selection-tools"><span id="selected-account-count"></span><button id="select-all-accounts" class="quiet" type="button">全选</button></div></div><div id="account-options" class="account-options"></div>
+  <label class="field-label" for="task-content">定制内容</label><textarea id="task-content" rows="5" maxlength="8000" required placeholder="输入要发送给灵犀的完整文字…"></textarea>
+  <label class="field-label" for="run-at">发送时间 <small>北京时间</small></label><input id="run-at" type="datetime-local" step="1" required>
+  <div class="form-row"><div><label class="field-label" for="repeat-count">连续发送次数</label><div class="number-field"><input id="repeat-count" type="number" min="1" max="20" step="1" value="3" required><span>次</span></div></div><div><label class="field-label" for="send-interval">发送间隔</label><div class="number-field"><input id="send-interval" type="number" min="0.2" max="3600" step="any" value="1" required><span>秒</span></div></div></div>
+  <label class="checkbox-label"><input id="weekly" type="checkbox">每周同一天重复</label>
+  <p id="plan-preview" class="plan-preview">默认连续发 3 次，每次间隔 1 秒。</p>
+  <p id="form-error" class="form-error" role="alert" hidden></p>
+  <div class="dialog-actions"><button type="button" class="secondary" data-close="editor">取消</button><button id="save-task" class="primary" type="submit">保存预约</button></div>
+</form></dialog>
+<dialog id="batch-editor" aria-labelledby="batch-editor-title"><form id="batch-form">
+  <div class="dialog-heading"><div><h2 id="batch-editor-title">批量调整任务</h2><p>仅修改勾选的字段，其余设置、账号和执行记录保留。</p></div><button type="button" class="close quiet" data-close="batch-editor" aria-label="关闭批量调整">×</button></div>
+  <div class="batch-field"><label class="batch-field-label"><input type="checkbox" data-batch-field="content">修改定制内容</label><textarea id="batch-content" rows="3" maxlength="8000" placeholder="填写要统一发送的新内容…" disabled></textarea></div>
+  <div class="batch-field"><label class="batch-field-label"><input type="checkbox" data-batch-field="run_at">修改发送时间 <small>北京时间</small></label><input id="batch-run-at" type="datetime-local" step="1" disabled></div>
+  <div class="form-row"><div class="batch-field"><label class="batch-field-label"><input type="checkbox" data-batch-field="repeat_count">修改发送次数</label><div class="number-field"><input id="batch-repeat-count" type="number" min="1" max="20" step="1" disabled><span>次</span></div></div><div class="batch-field"><label class="batch-field-label"><input type="checkbox" data-batch-field="interval">修改发送间隔</label><div class="number-field"><input id="batch-interval" type="number" min="0.2" max="3600" step="any" disabled><span>秒</span></div></div></div>
+  <div class="batch-field"><label class="batch-field-label"><input type="checkbox" data-batch-field="weekly">修改重复方式</label><select id="batch-weekly" disabled><option value="false">仅执行一次</option><option value="true">每周同一天重复</option></select></div>
+  <p id="batch-error" class="form-error" role="alert" hidden></p>
+  <div class="dialog-actions"><button type="button" class="secondary" data-close="batch-editor">取消</button><button id="save-batch" class="primary" type="submit" disabled>保存调整</button></div>
+</form></dialog>
+<dialog id="delete-confirm" aria-labelledby="delete-title" aria-describedby="delete-description"><form id="delete-form">
+  <div class="dialog-heading"><div><h2 id="delete-title">删除任务</h2><p id="delete-description">任务及全部执行记录将被删除，无法恢复。账号和其他任务会保留。</p></div><button type="button" class="close quiet" data-close="delete-confirm" aria-label="关闭删除确认">×</button></div>
+  <div id="delete-task-list" class="delete-task-list"></div>
+  <p id="delete-scheduled-note" class="settings-note" hidden></p>
+  <p id="delete-error" class="form-error" role="alert" hidden></p>
+  <div class="dialog-actions"><button type="button" class="secondary" data-close="delete-confirm" autofocus>取消</button><button id="confirm-delete" type="submit" class="danger">确认删除</button></div>
+</form></dialog>
+<dialog id="results" class="results-dialog" aria-labelledby="results-title"><div class="dialog-heading"><div><h2 id="results-title">执行记录</h2><p id="results-subtitle"></p></div><button class="close quiet" data-close="results" aria-label="关闭">×</button></div><div id="results-body"></div></dialog>
+<dialog id="send-settings" aria-labelledby="send-settings-title"><form id="send-settings-form">
+  <div class="dialog-heading"><div><h2 id="send-settings-title">发送设置</h2><p>所有灵犀定时任务共用，保存后立即生效。</p></div><button type="button" class="close quiet" data-close="send-settings" aria-label="关闭发送设置">×</button></div>
+  <label class="field-label" for="concurrency-limit">并发上限 <small>1～1024，默认 256</small></label><input id="concurrency-limit" type="number" min="1" max="1024" step="1" value="256" required>
+  <p class="settings-note">超过上限的请求按入队顺序等待，实际发送时间可能晚于预约时间。停止任务会取消尚未发出的排队请求。</p>
+  <p class="settings-note">降低上限不会中断正在接收的回复，后续请求按新上限处理。设置保存在本机，重启后继续使用。</p>
+  <p id="send-settings-error" class="form-error" role="alert" hidden></p>
+  <div class="dialog-actions"><button class="secondary" type="button" data-close="send-settings">取消</button><button id="save-send-settings" class="primary" type="submit">保存设置</button></div>
+</form></dialog>
+</body></html>

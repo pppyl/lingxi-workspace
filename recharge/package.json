@@ -1,0 +1,11 @@
+{
+  "name": "wednesday-recharge-local",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check browser_bridge.mjs && node --check static/app.js"
+  },
+  "dependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

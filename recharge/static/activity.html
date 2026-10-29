@@ -1,0 +1,27 @@
+<div id="activity-app" class="activity-shell">
+  <header class="activity-header">
+    <a class="brand" href="/" aria-label="返回功能中心"><span class="brand-mark">三</span><span>周三充值日</span></a>
+    <nav aria-label="页面导航"><a href="/">功能中心</a><a data-task-link>任务管理 <span id="task-count" class="nav-count" hidden></span></a></nav>
+  </header>
+  <main>
+    <div class="page-heading"><div><h1>本场活动</h1><p id="opening-note">每周三 08:00 开放</p></div><div class="page-actions"><button id="refresh-button" class="quiet-button" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>刷新</span></button><details class="more-menu"><summary aria-label="更多操作">···</summary><div><a id="official-link" href="https://wx.10086.cn/hlwyxhdhub/act-wedrecharge/1024101716" target="_blank" rel="noopener noreferrer">官方活动 ↗</a><button id="remove-account-button" type="button" hidden>移出本活动</button></div></details></div></div>
+    <section class="account-bar" aria-label="活动使用账号">
+      <div class="account-picker"><span class="account-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></span><div><label for="activity-login">活动账号</label><select id="activity-login" aria-label="活动使用账号"><option value="">正在读取账号…</option></select></div></div>
+      <span id="connection-status" class="connection-status">正在读取</span><button id="current-app-login" class="secondary-button" type="button" hidden>使用所选账号</button><span class="account-spacer"></span><button class="account-manager" type="button" data-account-window>管理账号</button>
+    </section>
+    <section id="standalone-login" hidden aria-label="登录活动账号"></section>
+    <div id="page-notice" class="page-notice" role="status" hidden></div>
+    <div class="activity-grid">
+      <section class="card claim-card" aria-labelledby="claim-title">
+        <div class="card-heading"><h2 id="claim-title">本场状态</h2><span id="claim-label" class="status-badge">待查询</span></div>
+        <div class="claim-content"><h3 id="countdown">选择账号，查看领取资格</h3><p id="claim-reason">已登录账号可直接使用。</p></div>
+        <div class="claim-bottom"><button id="claim-button" class="primary-button" type="button" disabled>立即领取一次 <span aria-hidden="true">↗</span></button><span id="server-time" class="server-time"></span></div>
+      </section>
+      <aside class="card schedule-card" aria-labelledby="schedule-title"><div class="card-heading"><h2 id="schedule-title">定时领取</h2><span id="schedule-frequency" class="small-label">未设置</span></div><div id="scheduled-plan" hidden><p class="next-label">下次执行 · 北京时间</p><div class="schedule-date"><span id="next-date"></span><strong id="next-time"></strong></div><p id="schedule-state" class="schedule-state"></p></div><div id="unscheduled-plan"><span class="schedule-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span><p>让任务按时执行</p><small>预约和执行记录集中管理</small></div><a id="schedule-action" class="schedule-action" data-task-link>设置预约 <span aria-hidden="true">→</span></a></aside>
+    </div>
+    <section class="card prizes-card" aria-labelledby="prizes-title"><div class="card-heading"><div class="prizes-heading"><h2 id="prizes-title">我的奖品</h2><span id="prize-count" class="small-label"></span></div><button id="prizes-button" class="quiet-button" type="button" disabled>查询奖品 <span aria-hidden="true">↗</span></button></div><div id="prize-list" class="prize-list"><div class="prize-empty"><svg aria-hidden="true" viewBox="0 0 32 32"><path d="M5 9h22v5a3 3 0 0 0 0 6v5H5v-5a3 3 0 0 0 0-6V9Z"/><path d="M20 10v3m0 3v3m0 3v2"/></svg><p>选择账号后，查看已领取的奖品。</p></div></div></section>
+    <details id="pool-details" class="pool-details" hidden><summary>查看本场奖池 <span aria-hidden="true">＋</span></summary><div id="coupons" class="pool-items"></div></details>
+    <footer class="activity-footer">活动资格及奖品以中国移动官方结果为准。</footer>
+  </main>
+</div>
+<div id="toast" class="activity-toast" role="status" hidden></div>
