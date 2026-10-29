@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>签到有礼 · 本地工具台</title><link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/checkin.css">
+  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/checkin.js" defer></script>
+</head>
+<body class="workspace-app" data-workspace="checkin"><main class="portal-shell checkin-shell">
+  <section class="checkin-heading"><div><h1>签到有礼</h1><p>使用共享账号，每天签到一次，按时尝试月末秒杀。</p></div><div class="checkin-actions"><button id="checkin-refresh" class="secondary" type="button">刷新</button><button id="checkin-sign-now" class="secondary" type="button">立即签到</button><button id="checkin-configure" class="primary" type="button">配置自动任务</button></div></section>
+  <p id="checkin-warning" class="checkin-notice" role="status" hidden></p><p id="checkin-feedback" class="checkin-feedback" role="status" hidden></p>
+  <section class="checkin-overview" aria-label="自动任务概览">
+    <article class="checkin-overview-card"><span class="checkin-symbol"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v16H4z M8 3v4 M16 3v4 M4 10h16 M8 15l3 3 5-5"/></svg></span><div><h2>每日签到 <span id="checkin-sign-count" class="checkin-count">正在读取</span></h2><p>每天按设定时间执行，每个账号每天最多签到一次。</p></div></article>
+    <article class="checkin-overview-card"><span class="checkin-symbol orange"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><div><h2>月末秒杀 <span id="checkin-flash-count" class="checkin-count">正在读取</span></h2><p>每天北京时间 12:00 尝试，仅按官方规则执行。</p></div></article>
+  </section>
+  <section class="checkin-list-panel" aria-label="账号签到与自动任务">
+    <div class="checkin-list-heading"><div class="checkin-tabs" role="group" aria-label="查看内容"><button class="selected" data-checkin-view="accounts" aria-pressed="true">账号签到情况 <span id="checkin-account-total">—</span></button><button data-checkin-view="tasks" aria-pressed="false">自动任务 <span id="checkin-task-count">—</span></button></div><input id="checkin-search" class="checkin-search" type="search" placeholder="搜索账号或号码尾号" aria-label="搜索签到账号或任务" autocomplete="off"></div>
+    <div id="checkin-account-controls" class="checkin-account-controls"><select id="checkin-account-state-filter" aria-label="筛选今日签到状态"><option value="all">全部签到状态</option><option value="signed">今日已签到</option><option value="unsigned">今日未签到</option><option value="unknown">尚未查询</option><option value="attention">需要处理</option></select><span id="checkin-account-summary">正在读取账号签到情况…</span></div>
+    <div id="checkin-task-controls" class="checkin-task-controls" hidden><div class="checkin-tabs" role="group" aria-label="任务类型筛选"><button class="selected" data-checkin-kind="all" aria-pressed="true">全部任务</button><button data-checkin-kind="signin" aria-pressed="false">每日签到</button><button data-checkin-kind="flash" aria-pressed="false">月末秒杀</button></div></div>
+    <div id="checkin-selection-bar" class="checkin-selection" hidden><label><input id="checkin-select-tasks" type="checkbox" disabled>全选可停止任务</label><div><span id="checkin-selected-tasks">已选 0 项</span><button id="checkin-clear-tasks" class="quiet" type="button" hidden>取消选择</button><button id="checkin-stop-tasks" class="secondary" type="button" disabled>停止所选</button></div></div>
+    <div id="checkin-accounts-view" class="checkin-table-wrap"><table class="checkin-table checkin-accounts-table" aria-label="各账号签到情况"><colgroup><col class="checkin-col-account"><col class="checkin-col-today"><col class="checkin-col-month"><col class="checkin-col-last-sign"><col class="checkin-col-auto"><col><col class="checkin-col-actions"></colgroup><thead><tr><th scope="col">共享账号</th><th scope="col">今日签到</th><th scope="col">当月累计</th><th scope="col">最近签到 · 北京时间</th><th scope="col">自动签到</th><th scope="col">月末秒杀</th><th scope="col">操作</th></tr></thead><tbody id="checkin-accounts"><tr><td colspan="7" class="checkin-empty">正在读取各账号签到情况…</td></tr></tbody></table></div>
+    <div id="checkin-tasks-view" class="checkin-table-wrap" hidden><table class="checkin-table" aria-label="签到与秒杀自动任务"><colgroup><col class="checkin-col-select"><col class="checkin-col-account"><col class="checkin-col-kind"><col class="checkin-col-time"><col class="checkin-col-state"><col><col class="checkin-col-actions"></colgroup><thead><tr><th scope="col" aria-label="选择任务">选</th><th scope="col">执行账号</th><th scope="col">任务类型</th><th scope="col">下次执行 · 北京时间</th><th scope="col">状态</th><th scope="col">最近结果</th><th scope="col">操作</th></tr></thead><tbody id="checkin-tasks"><tr><td colspan="7" class="checkin-empty">正在读取任务…</td></tr></tbody></table></div>
+    <div class="checkin-list-footer"><span id="checkin-sync-state">北京时间 · 自动刷新</span><span>活动未开放时记录原因，不显示为执行成功。</span></div>
+  </section>
+  <p class="checkin-footnote">定时任务需要本地服务持续运行，电脑保持开机、联网且不休眠。</p>
+</main>
+<dialog id="checkin-editor" aria-labelledby="checkin-editor-title"><form id="checkin-form">
+  <div class="checkin-dialog-heading"><div><h2 id="checkin-editor-title">配置自动任务</h2><p id="checkin-editor-description">共享账号只需登录一次，选择后统一设置。</p></div><button type="button" class="close quiet" data-checkin-close="checkin-editor" aria-label="关闭任务配置">×</button></div>
+  <div class="checkin-account-heading"><span>使用账号 <small>可多选</small></span><div><span id="checkin-account-count">已选 0 个</span><button id="checkin-select-accounts" type="button" class="quiet">全选可用账号</button></div></div>
+  <div id="checkin-account-options" class="checkin-account-options"></div>
+  <div id="checkin-automatic-options">
+    <section class="checkin-setting"><label class="checkin-toggle"><span><strong>每日自动签到</strong><small>每个账号每天只执行一次</small></span><input id="checkin-signin-enabled" type="checkbox" role="switch"></label><div id="checkin-signin-fields" class="checkin-setting-fields" hidden><label for="checkin-signin-time">执行时间 <small>北京时间</small></label><input id="checkin-signin-time" type="time" value="08:00" required></div></section>
+    <section class="checkin-setting"><label class="checkin-toggle"><span><strong>月末秒杀</strong><small>每天北京时间 12:00 尝试</small></span><input id="checkin-flash-enabled" type="checkbox" role="switch"></label><div id="checkin-flash-fields" class="checkin-setting-fields" hidden><label for="checkin-product">目标商品</label><select id="checkin-product"><option value="">请选择商品</option></select><p id="checkin-product-description" class="checkin-setting-note"></p></div><p id="checkin-flash-unavailable" class="checkin-setting-note" hidden>暂无已确认可参与的商品，暂不能启用秒杀任务。</p></section>
+  </div>
+  <p id="checkin-form-error" class="checkin-form-error" role="alert" hidden></p>
+  <div class="checkin-dialog-actions"><button type="button" class="secondary" data-checkin-close="checkin-editor">取消</button><button id="checkin-save" type="submit" class="primary">保存自动任务</button></div>
+</form></dialog>
+<dialog id="checkin-history" aria-labelledby="checkin-history-title"><div class="checkin-dialog-heading"><div><h2 id="checkin-history-title">执行记录</h2><p id="checkin-history-description"></p></div><button type="button" class="close quiet" data-checkin-close="checkin-history" aria-label="关闭执行记录">×</button></div><div id="checkin-history-body"></div></dialog>
+</body>
+</html>

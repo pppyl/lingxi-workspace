@@ -75,12 +75,31 @@ class DatabaseLoginStorage:
                     '(task_id TEXT PRIMARY KEY, payload BLOB NOT NULL)')
                 connection.execute('CREATE TABLE IF NOT EXISTS lingxi_settings '
                     '(id INTEGER PRIMARY KEY CHECK(id=1), concurrency INTEGER NOT NULL CHECK(concurrency BETWEEN 1 AND 1024))')
+                connection.execute('CREATE TABLE IF NOT EXISTS checkin_data '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
         except (sqlite3.Error, OSError) as error:
             raise LoginStorageError('无法打开本机账号数据库，请检查目录权限或数据库是否损坏。') from error
 
     def _connect(self):
         from contextlib import closing
         return closing(sqlite3.connect(self.path, timeout=5))
+
+    def load_checkin_data(self):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM checkin_data WHERE id=1').fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('签到数据读取失败，已保留原数据库。') from error
+
+    def save_checkin_data(self, data):
+        payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO checkin_data(id,payload) VALUES(1,?) '
+                    'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (payload,))
+        except sqlite3.Error as error:
+            raise LoginStorageError('签到数据保存失败，本次未提交。') from error
 
     def load(self):
         try:

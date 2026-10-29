@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>账号管理 · 本地工具台</title><link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/portal.js" defer></script></head>
 <body class="workspace-app" data-workspace="accounts" data-page="accounts"><div class="portal-shell account-shell">
-  <header class="portal-header"><a class="portal-brand" href="/"><span class="brand-symbol">账</span><span>账号管理<small>灵犀与周三充值日共用</small></span></a><a class="back-link" href="/">返回功能中心 →</a></header>
-  <section class="manager-intro"><h1>管理已登录的账号</h1><p>在这里完成登录、修改备注和退出。两个功能直接选择账号使用。</p></section>
+  <header class="portal-header"><a class="portal-brand" href="/"><span class="brand-symbol">账</span><span>账号管理<small>所有功能共用账号</small></span></a><a class="back-link" href="/">返回功能中心 →</a></header>
+  <section class="manager-intro"><h1>管理已登录的账号</h1><p>在这里完成登录、修改备注和退出。所有功能直接选择账号使用。</p></section>
   <div class="manager-grid"><section class="pool-panel"><div class="panel-title"><h2>共享账号池 <span id="pool-count" class="count-chip">0</span></h2><button id="refresh-accounts" class="portal-quiet">刷新</button></div><div id="managed-accounts" class="managed-accounts" aria-live="polite"></div></section>
   <section class="pool-panel login-panel"><div class="panel-title"><h2 id="login-panel-title">添加登录账号</h2><button id="cancel-relogin" type="button" class="portal-quiet" hidden>取消重新登录</button></div><p id="login-panel-description" class="muted">已有登录会直接复用，不再重复发送验证码。</p><form id="manager-login-form">
     <fieldset id="login-identity">
@@ -11,6 +11,6 @@
     </fieldset>
     <label for="code">短信验证码</label><div class="manager-code-row"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6 位验证码" required><button id="send-sms" type="button" class="portal-secondary">获取验证码</button></div>
     <button id="manager-login-button" class="portal-primary full" type="submit">登录并加入账号池</button>
-  </form><p id="portal-feedback" class="portal-feedback" role="status"></p><div class="manager-note">同一手机号只登录一次。退出账号会同时清除两个功能中的对应会话。</div></section></div>
+  </form><p id="portal-feedback" class="portal-feedback" role="status"></p><div class="manager-note">同一手机号只登录一次。退出账号会同时清除各功能中的对应会话。</div></section></div>
   <footer class="portal-footer">账号保存在本机数据库，登录凭据经 Windows 用户加密；验证码不保存。重启后自动恢复会话。</footer>
 </div></body></html>

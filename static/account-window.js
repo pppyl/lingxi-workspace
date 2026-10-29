@@ -34,7 +34,7 @@ document.addEventListener('click', event => {
       close.textContent = '×'; close.setAttribute('aria-label', '关闭账号管理');
       close.addEventListener('click', () => managerDialog.close());
       header.append(title, close);
-      root.querySelector('.manager-intro').textContent = '灵犀与周三充值日共用账号，登录、修改备注和退出都在这里完成。';
+      root.querySelector('.manager-intro').textContent = '所有功能共用账号，登录、修改备注和退出都在这里完成。';
       managerDialog.replaceChildren(root);
       const manager = mountPortal(root, {manager: true, embedded: true});
       managerDialog.setAttribute('aria-labelledby', 'modal-account-manager-title');

@@ -15,10 +15,12 @@ from curl_cffi.requests.exceptions import RequestException
 from lingxi_client import Account, LingxiError, chat, exchange_cookie, verify_token
 from app_login import AppLoginError, AppLoginSession, AppCredentialError
 from unified_logins import UnifiedLogins
-from login_storage import DatabaseLoginStorage
+from login_storage import DatabaseLoginStorage, LoginStorageError
 from session_maintenance import SessionMaintenance
 from recharge.cmcc import ActivityError
 from lingxi_scheduler import LingxiScheduler, TaskError
+from checkin_client import CheckinError
+from checkin_scheduler import CheckinScheduler, CheckinTaskError
 from runtime_paths import DATA_DIR,RECHARGE_DATA_DIR
 
 
@@ -222,6 +224,38 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     @app.get('/lingxi/tasks')
     def lingxi_tasks_page():
         return render_template('lingxi_tasks.html')
+
+    @app.get('/checkin')
+    def checkin_page():
+        return render_template('checkin.html')
+
+    @app.errorhandler(CheckinTaskError)
+    def checkin_task_error(error):
+        return jsonify(error=str(error)), error.status
+
+    @app.errorhandler(LoginStorageError)
+    def account_database_error(error):
+        return jsonify(error=str(error)), 503
+
+    @app.get('/api/checkin/status')
+    def checkin_status():
+        return jsonify(checkin_scheduler.status())
+
+    @app.post('/api/checkin/tasks/save')
+    def save_checkin_tasks():
+        return jsonify(message=checkin_scheduler.save(request.get_json()))
+
+    @app.post('/api/checkin/tasks/stop')
+    def stop_checkin_tasks():
+        checkin_scheduler.stop(request.get_json().get('ids'))
+        return jsonify(message='已停止所选任务，已发出的请求会保留结果')
+
+    @app.post('/api/checkin/run')
+    def run_checkin():
+        data = request.get_json()
+        if data.get('kind') != 'signin':
+            return jsonify(error='此入口仅执行每日签到。'), 400
+        return jsonify(message=checkin_scheduler.run(data.get('login_ids')))
 
     @app.errorhandler(TaskError)
     def lingxi_task_error(error):
@@ -455,7 +489,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
     def clear_login_states(phone):
         saved=unified.get(phone)
-        if saved is not None:lingxi_scheduler.cancel_login(saved.id)
+        if saved is not None:
+            checkin_scheduler.forget(saved.id)
+            lingxi_scheduler.cancel_login(saved.id)
         unified.forget(phone)
         for logged in all_chat_accounts():
             if logged.app_phone == phone:
@@ -559,6 +595,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
         def forget_locked_app_login(phone):
             from recharge.cmcc import ActivityError
+            saved = unified.get(phone)
+            if saved is not None and checkin_scheduler.busy_login(saved.id):
+                raise CheckinTaskError('该账号正在签到或领取，请完成后退出。', 409)
             with accounts_lock:
                 if any(a.app_phone == phone and a.lock.locked() for a in all_chat_accounts()):
                     # The caller's own logout holds no account lock.
@@ -653,6 +692,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 return True
             if lingxi_scheduler.busy_login(saved.id):
                 return False
+            if checkin_scheduler.busy_login(saved.id):
+                return False
             if any(a.app_phone == saved.phone and a.lock.locked() for a in all_chat_accounts()):
                 return False
             errors = []
@@ -723,6 +764,15 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
     lingxi_scheduler=LingxiScheduler(prepare_scheduled_chat,send_scheduled_chat,scheduled_account_info,storage=database)
     app.extensions['lingxi_scheduler']=lingxi_scheduler
+    def checkin_credentials(login_id):
+        with unified.lock:
+            saved = unified.get_id(login_id)
+            if saved is None or saved.status == 'login_required':
+                raise CheckinError('共享账号需要重新登录，请在账号管理填写验证码。', 'APP_LOGIN_REQUIRED', 401)
+            return unified.credentials(login_id)
+
+    checkin_scheduler = CheckinScheduler(checkin_credentials, unified.public, storage=database)
+    app.extensions['checkin_scheduler'] = checkin_scheduler
     app.extensions['session_maintenance'] = SessionMaintenance(unified, maintain_login)
     return app
 
@@ -733,5 +783,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("LINGXI_PORT", "5500"))
     app.extensions['session_maintenance'].start()
     app.extensions['lingxi_scheduler'].start()
+    app.extensions['checkin_scheduler'].start()
     app.extensions['recharge_app'].extensions['scheduler'].start()
     app.run(host="127.0.0.1", port=port, threaded=True, debug=False, use_reloader=False)

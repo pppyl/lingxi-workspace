@@ -6,14 +6,16 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from urllib.parse import quote
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
+from runtime_paths import VERSION
 OWNER='pppyl'
 NAME='lingxi-workspace'
-VERSION='1.0.1'
 
 
 def main():
