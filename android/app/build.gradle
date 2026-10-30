@@ -1,0 +1,39 @@
+plugins { id 'com.android.application'; id 'com.chaquo.python' }
+dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
+android {
+    namespace 'cn.pppyl.lingxiworkspace'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'cn.pppyl.lingxiworkspace'
+        minSdk 24
+        targetSdk 35
+        versionCode 120
+        versionName '1.2.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('LINGXI_KEYSTORE') ?: '../../.local/android-release.keystore')
+            storePassword System.getenv('LINGXI_KEYSTORE_PASSWORD')
+            keyAlias 'lingxi'
+            keyPassword System.getenv('LINGXI_KEYSTORE_PASSWORD')
+        }
+    }
+    buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+chaquopy {
+    defaultConfig {
+        version = '3.12'
+        buildPython(System.getenv('LINGXI_BUILD_PYTHON') ?: 'python')
+        pip {
+            install 'Flask==3.1.2'
+            install 'cryptography==42.0.8'
+            install 'httpx[http2]==0.28.1'
+            install 'waitress==3.0.2'
+            install 'tzdata==2025.2'
+            install 'qrcode==8.2'
+        }
+    }
+    sourceSets { main { srcDir '../../.build/android-python' } }
+}

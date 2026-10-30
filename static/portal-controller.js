@@ -8,6 +8,7 @@ if (embedded) {
 const byId = id => root.querySelector('#' + prefix + id);
 let working = false, smsPhone = '', smsReadyAt = 0, reloginId = '';
 let poolRecords = [];
+let focusedLoginId = '';
 const smsAttempts = new Map();
 async function portalApi(path, body) {
   const response = await fetch(path, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
@@ -49,18 +50,23 @@ async function refreshPool() {
       if (record.status && record.status !== 'active') pill.append(node('small','',loginStatus(record)));
       return pill;
     }
-    const row = node('article', 'managed-account'); row.dataset.loginId = record.id;
-    const headline = node('div', 'phone-line');
-    headline.append(node('strong', '', record.phone_masked), node('span', record.status === 'login_required' ? 'required-state' : '', loginStatus(record)));
+    const row = node('tr', 'managed-account ' + (record.status === 'active' ? 'account-ready' : record.status === 'login_required' ? 'account-expired' : 'account-pending'));
+    row.dataset.loginId = record.id; row.dataset.status = record.status;
+    row.classList.toggle('account-focused', record.id === focusedLoginId);
+    const identity = node('td', 'account-identity');
+    identity.append(node('strong', '', record.phone_masked));
     const stamp = new Date(record.created_at * 1000).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai', hour12:false});
+    identity.append(node('small', 'account-time', stamp));
     const name = node('input'); name.value = record.name || ''; name.placeholder = '添加账号备注'; name.maxLength = 40;
     name.setAttribute('aria-label', record.phone_masked + '的账号备注');
+    const nameCell = node('td', 'account-name'); nameCell.append(name);
+    const stateCell = node('td', 'account-state-cell');
+    stateCell.append(node('span', 'account-state', loginStatus(record)));
+    const message = node('td', 'session-message', record.message || '—');
     const actions = node('div', 'row-actions');
-    if (record.status === 'login_required') {
-      const button = node('button', 'portal-primary', '重新登录'); button.type = 'button';
-      button.addEventListener('click', () => managerAction(() => reloginAccount(record)));
-      actions.append(button);
-    }
+    const relogin = node('button', 'portal-secondary', '重新登录'); relogin.type = 'button';
+    relogin.addEventListener('click', () => managerAction(() => reloginAccount(record)));
+    actions.append(relogin);
     for (const [label, endpoint, style] of [['保存备注','rename','portal-quiet'],['校验并重连','check','portal-quiet'],['退出账号','logout','logout-action']]) {
       const button = node('button', style, label); button.type = 'button';
       button.addEventListener('click', () => managerAction(async () => {
@@ -70,11 +76,15 @@ async function refreshPool() {
       }));
       actions.append(button);
     }
-    row.append(headline, node('p', 'account-time', '加入时间 ' + stamp));
-    if (record.message) row.append(node('p', 'session-message', record.message));
-    row.append(name, actions); return row;
+    const actionCell = node('td', 'account-actions'); actionCell.append(actions);
+    row.append(identity, nameCell, stateCell, message, actionCell); return row;
   });
-  if (!rows.length) rows.push(node('p','muted', isManager ? '账号池还是空的，在右侧添加第一个登录账号。' : '尚无登录账号，打开账号管理即可添加。'));
+  if (!rows.length) {
+    if (isManager) {
+      const row = node('tr'), cell = node('td', 'account-table-empty', '账号池还是空的，在登录区添加第一个账号。');
+      cell.colSpan = 5; row.append(cell); rows.push(row);
+    } else rows.push(node('p','muted', '尚无登录账号，打开账号管理即可添加。'));
+  }
   host.replaceChildren(...rows);
 }
 function loginStatus(record) {
@@ -120,7 +130,7 @@ async function sendManagerSms(resend = false) {
   smsReadyAt = Date.now() + 60000;
   smsAttempts.set(key, {readyAt:smsReadyAt, sent:false});
   portalFeedback(reloginId ? '正在向原手机号发送验证码…' : '正在检查账号并获取验证码…');
-  const result = await portalApi(reloginId ? '/api/logins/relogin/sms' : '/api/logins/sms', reloginId ? {id:reloginId, resend} : {phone});
+  const result = await portalApi(reloginId ? '/api/logins/relogin/sms' : '/api/logins/sms', reloginId ? {id:reloginId, resend, force:true} : {phone});
   if (result.reused) {
     const relogging = !!reloginId;
     smsAttempts.delete(key); smsPhone = ''; byId('code').value = '';
@@ -150,7 +160,7 @@ if (isManager) {
     if (!relogging && phone !== smsPhone) { portalFeedback('请先向该手机号获取验证码。'); return; }
     managerAction(async () => {
       portalFeedback(relogging ? '正在重新登录并更新共享凭据…' : '正在登录并加入共享账号池…');
-      const result = await portalApi(relogging ? '/api/logins/relogin' : '/api/logins/login', relogging ? {id:reloginId, code:byId('code').value.trim()} : {phone, code:byId('code').value.trim(), name:byId('login-name').value.trim()});
+      const result = await portalApi(relogging ? '/api/logins/relogin' : '/api/logins/login', relogging ? {id:reloginId, code:byId('code').value.trim(), force:true} : {phone, code:byId('code').value.trim(), name:byId('login-name').value.trim()});
       if (relogging) { smsAttempts.delete('id:' + reloginId); setRelogin(); }
       else { byId('manager-login-form').reset(); smsPhone = ''; smsReadyAt = 0; }
       portalFeedback(relogging ? result.message : '账号已加入，灵犀和周三充值日均可选择使用。', true);
@@ -167,7 +177,13 @@ window.addEventListener('accounts-changed', reloadWhenIdle);
 window.addEventListener('focus', reloadWhenIdle);
 refreshPool().catch(error => portalFeedback(error.message));
 setInterval(() => { if (!document.hidden) reloadWhenIdle(); }, 10000);
-return {refresh: reloadWhenIdle, relogin: id => managerAction(async () => {
+return {refresh: reloadWhenIdle, focus: async (id, message) => {
+  focusedLoginId = id; await refreshPool();
+  const row = [...root.querySelectorAll('.managed-account')].find(item => item.dataset.loginId === id);
+  if (!row) { portalFeedback('该账号已退出，请刷新账号列表。'); return; }
+  row.tabIndex = -1; row.scrollIntoView({block:'center', behavior:'smooth'}); row.focus({preventScroll:true});
+  if (message) portalFeedback(message);
+}, relogin: id => managerAction(async () => {
   await refreshPool();
   const record = poolRecords.find(item => item.id === id);
   if (!record) { portalFeedback('该账号已退出，请刷新账号列表。'); return; }

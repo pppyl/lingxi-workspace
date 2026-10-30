@@ -10,8 +10,8 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from threading import Lock
 
-from curl_cffi import requests, CurlHttpVersion
-from curl_cffi.requests.exceptions import RequestException
+from http_transport import requests, CurlHttpVersion
+from http_transport import RequestException
 
 AUTH_URL = "https://wx.10086.cn/api/nguac/model/sso/jsession"
 CHAT_URL = "https://h.app.coc.10086.cn/lingxi/api/v1/chat"

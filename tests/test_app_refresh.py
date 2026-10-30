@@ -129,12 +129,13 @@ class SharedRefreshTests(unittest.TestCase):
         self.assertNotIn(b'new-refresh',result.data)
 
     @patch('app.verify_token')
-    def test_activity_failure_keeps_primary_login_retryable_and_never_sends_sms(self,verify):
+    def test_activity_failure_keeps_primary_login_usable_and_retries_in_background(self,verify):
         self.client.connect_app.side_effect=ActivityError('temporary','APP_SSO_FAILED',502,retryable=True)
         with patch('app.AppLoginSession.refresh',autospec=True,side_effect=lambda s:s.cookie):
             maintenance=self.app.extensions['session_maintenance'];maintenance.tick()
-        self.assertEqual(self.saved.status,'retry')
+        self.assertEqual(self.saved.status,'active')
         self.assertTrue(self.saved.public()['logged_in'])
+        self.assertIn(self.saved.id,maintenance.due)
 
     @patch('app.verify_token')
     def test_late_lingxi_exchange_cannot_overwrite_rotated_token(self,verify):

@@ -15,6 +15,10 @@ class LoginStorageError(Exception):
 
 
 def _dpapi(data: bytes, *, decrypt=False) -> bytes:
+    if os.environ.get('LINGXI_ANDROID') == '1':
+        from java import jclass
+        vault = jclass('cn.pppyl.lingxiworkspace.CredentialVault')
+        return bytes(vault.decrypt(data) if decrypt else vault.encrypt(data))
     if os.name != 'nt':
         raise LoginStorageError('当前系统不支持 Windows 登录态加密，账号仅保留在内存中。')
 
@@ -77,6 +81,10 @@ class DatabaseLoginStorage:
                     '(id INTEGER PRIMARY KEY CHECK(id=1), concurrency INTEGER NOT NULL CHECK(concurrency BETWEEN 1 AND 1024))')
                 connection.execute('CREATE TABLE IF NOT EXISTS checkin_data '
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS monthly_coupon_data '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS coupon_use_data '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
         except (sqlite3.Error, OSError) as error:
             raise LoginStorageError('无法打开本机账号数据库，请检查目录权限或数据库是否损坏。') from error
 
@@ -91,6 +99,40 @@ class DatabaseLoginStorage:
             return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
         except (sqlite3.Error, ValueError, UnicodeError) as error:
             raise LoginStorageError('签到数据读取失败，已保留原数据库。') from error
+
+    def load_coupon_use_data(self):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM coupon_use_data WHERE id=1').fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('卡券使用记录读取失败，已保留原数据库。') from error
+
+    def save_coupon_use_data(self, data):
+        payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO coupon_use_data(id,payload) VALUES(1,?) '
+                    'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (payload,))
+        except sqlite3.Error as error:
+            raise LoginStorageError('卡券使用记录保存失败，本次未提交。') from error
+
+    def load_monthly_coupon_data(self):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM monthly_coupon_data WHERE id=1').fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('每月话费券数据读取失败，已保留原数据库。') from error
+
+    def save_monthly_coupon_data(self, data):
+        payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO monthly_coupon_data(id,payload) VALUES(1,?) '
+                    'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (payload,))
+        except sqlite3.Error as error:
+            raise LoginStorageError('每月话费券数据保存失败，本次未提交。') from error
 
     def save_checkin_data(self, data):
         payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))

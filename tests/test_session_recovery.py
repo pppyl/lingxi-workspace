@@ -4,6 +4,8 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import threading
+import time
+from types import SimpleNamespace
 from contextlib import closing
 import unittest
 from datetime import datetime, timedelta
@@ -41,7 +43,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(restored.id, saved.id)
         self.assertEqual(restored.profile, saved.profile)
         self.assertEqual(restored.name, saved.name)
-        self.assertEqual(restored.status, 'restoring')
+        self.assertEqual(restored.status, 'active')
         for path in Path(self.directory.name).glob('accounts.sqlite3*'):
             for secret in [b'private-cookie-marker', b'private-token-marker', b'19900000001']:
                 self.assertNotIn(secret, path.read_bytes())
@@ -176,10 +178,49 @@ class RecoveryIntegrationTests(unittest.TestCase):
     @patch('app.verify_token',side_effect=ConnectionError('temporary network failure'))
     def test_transient_failure_keeps_database_cookie_and_schedule(self, verify):
         self.app.extensions['session_maintenance'].tick()
-        self.assertEqual(self.pool.get(self.saved.phone).status,'retry')
+        self.assertEqual(self.pool.get(self.saved.phone).status,'active')
         self.assertEqual(UnifiedLogins(DatabaseLoginStorage(self.path)).get(self.saved.phone).cookie,self.saved.cookie)
         self.assertTrue(self.scheduler.snapshots()['default']['enabled'])
         self.assertTrue(self.manager.get().cached['authenticated'])
+
+    @patch('app.verify_token')
+    def test_wallet_remains_usable_while_lingxi_is_reconnecting(self, verify):
+        def rotated(flow):
+            flow.cookie = 'JSESSIONID=newly-refreshed-cookie'
+            flow.refreshed_at = time.time()
+        self.renewal.side_effect = rotated
+        def exchange(cookie):
+            self.assertEqual(cookie, 'JSESSIONID=newly-refreshed-cookie')
+            self.assertEqual(self.pool.credentials(self.saved.id)['cookie'], cookie)
+            account = self.http.get('/api/coupons/accounts').get_json()['accounts'][0]
+            self.assertEqual(account['status'], 'active')
+            with patch('app.CouponClient.query', return_value={
+                    'items': [], 'page': 1, 'total': 0, 'has_more': False}) as query:
+                response = self.http.get('/api/coupons?login_id='+self.saved.id)
+            self.assertEqual(response.status_code, 200)
+            query.assert_called_once()
+            responses = []
+            def prepare_from_another_request():
+                with self.app.test_client() as client:
+                    responses.append(client.post('/api/coupons/use/prepare',
+                        json={'login_id': self.saved.id, 'coupon_id': 'a'*24}).status_code)
+            with patch.object(self.app.extensions['coupon_uses'], 'prepare', return_value={'kind': 'exchange'}):
+                request = threading.Thread(target=prepare_from_another_request)
+                request.start(); request.join(timeout=2)
+                self.assertFalse(request.is_alive(), 'Lingxi SSO must not hold the shared phone lock')
+                self.assertEqual(responses, [200])
+            return 'new-lingxi-token'
+        with patch('app.exchange_cookie', side_effect=exchange) as exchange_call:
+            self.app.extensions['session_maintenance'].tick()
+        exchange_call.assert_called_once()
+        self.assertEqual(self.saved.status, 'active')
+
+    @patch('app.verify_token', side_effect=LingxiError('temporary business failure', authentication=False))
+    def test_lingxi_failure_does_not_disable_other_features_or_request_login(self, verify):
+        self.app.extensions['session_maintenance'].tick()
+        self.assertEqual(self.saved.status, 'active')
+        self.assertTrue(self.saved.public()['logged_in'])
+        self.manager.get().client.app_login.send_sms.assert_not_called()
 
     @patch('app.exchange_cookie',side_effect=LingxiError('rejected',authentication=True))
     @patch('app.verify_token',side_effect=LingxiError('expired',authentication=True))
@@ -200,6 +241,30 @@ class RecoveryIntegrationTests(unittest.TestCase):
         self.assertFalse(DatabaseLoginStorage(self.path).load())
         self.assertFalse(self.scheduler.snapshots()['default']['enabled'])
         self.assertFalse(self.manager.get().pool_login_id)
+
+    @patch('app.verify_token')
+    def test_wallet_sms_wait_defers_renewal_without_blocking_other_accounts(self, verify):
+        uses = self.app.extensions['coupon_uses']
+        uses.operations['waiting-for-code'] = SimpleNamespace(
+            login_id=self.saved.id, context=object(), result=None, expires=time.monotonic()+600)
+        other = self.pool.remember('19900000002', 'JSESSIONID=another-cookie', {}, 'another-token')
+        revision = self.saved.credential_revision
+        maintenance = self.app.extensions['session_maintenance']
+        maintenance.tick()
+        self.assertEqual(self.saved.credential_revision, revision)
+        self.assertGreater(other.credential_revision, 1)
+        self.assertEqual(self.renewal.call_count, 1)
+
+        # Ordinary business checks also keep the live wallet credentials stable.
+        response = self.http.post('/api/logins/check', json={'id': self.saved.id})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.renewal.call_count, 1)
+        self.assertEqual(self.saved.credential_revision, revision)
+
+        uses.operations['waiting-for-code'].expires = time.monotonic()-1
+        maintenance.due.clear()
+        maintenance.tick()
+        self.assertGreater(self.saved.credential_revision, revision)
 
     def test_explicit_reconnect_of_legacy_slot_preserves_waiting_schedule(self):
         self.manager.get().pool_login_id = ''

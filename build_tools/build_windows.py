@@ -62,7 +62,7 @@ def main():
     shutil.copy2(assets/'app.ico',ROOT/'static/app.ico')
     notice_dir=ROOT/'.build/notices';notice_dir.mkdir(exist_ok=True)
     shutil.copy2(Path(sys.base_prefix)/'LICENSE.txt',notice_dir/'Python-LICENSE.txt')
-    dependencies=['Flask','Werkzeug','Jinja2','MarkupSafe','itsdangerous','click','blinker','curl_cffi','cffi','certifi','cryptography','waitress','pystray','Pillow','six','PyInstaller']
+    dependencies=['Flask','Werkzeug','Jinja2','MarkupSafe','itsdangerous','click','blinker','curl_cffi','cffi','certifi','cryptography','waitress','pystray','Pillow','six','PyInstaller','qrcode']
     for name in dependencies:
         dist=importlib.metadata.distribution(name)
         for entry in dist.files or []:
@@ -102,7 +102,10 @@ def main():
     subprocess.run(command,cwd=ROOT,check=True)
     executable=release/f'LingxiWorkspace-{VERSION}-Windows-x64.exe'
     shutil.copy2(ROOT/'.build/dist/LingxiWorkspace.exe',executable)
-    (release/'SHA256SUMS.txt').write_text(''.join(sha256(path)+'  '+path.name+'\n' for path in [executable,archive]),'utf-8')
+    artifacts=[executable,archive]
+    android=release/f'LingxiWorkspace-{VERSION}-Android-arm64.apk'
+    if android.exists():artifacts.append(android)
+    (release/'SHA256SUMS.txt').write_text(''.join(sha256(path)+'  '+path.name+'\n' for path in artifacts),'utf-8')
     shutil.copy2(ROOT/'RELEASE_NOTES.md',release/f'RELEASE_NOTES-{VERSION}.md')
     print(json.dumps({'archive':str(archive),'bytes':archive.stat().st_size,'files':len(files),'runtime':runtime},ensure_ascii=False),flush=True)
 

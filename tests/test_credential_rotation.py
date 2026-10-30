@@ -64,7 +64,7 @@ class CredentialRotationTests(unittest.TestCase):
         self.assertEqual(result.token, '')
         self.assertEqual(result.profile, {'provinceCode':'100'})
         self.assertEqual(result.app_context, {'device_id':'unit-device','xk':'new-xk'})
-        self.assertEqual(result.status, 'restoring')
+        self.assertEqual(result.status, 'active')
         self.assertEqual(result.credential_revision, 2)
         self.assertEqual(result.name, '主号')
 
@@ -74,6 +74,19 @@ class CredentialRotationTests(unittest.TestCase):
             cookie=self.saved.cookie, app_context={'xk':'new-xk'})
         self.assertEqual(self.saved.token, old_token)
         self.assertEqual(self.saved.credential_revision, 2)
+        self.assertEqual(self.saved.public()['status'], 'active')
+
+    def test_saved_credentials_are_usable_during_background_validation_after_restart(self):
+        restored = UnifiedLogins(self.storage).get(self.saved.phone)
+        self.assertEqual(restored.public()['status'], 'active')
+        self.assertTrue(restored.public()['logged_in'])
+
+    def test_confirmed_login_expiry_persists_until_explicit_login(self):
+        self.pool.mark(self.saved, 'login_required', '需要短信验证')
+        restored = UnifiedLogins(self.storage).get(self.saved.phone)
+        self.assertEqual(restored.status, 'login_required')
+        self.pool.remember(self.saved.phone, 'JSESSIONID=new-login', {}, 'new-token')
+        self.assertEqual(UnifiedLogins(self.storage).get(self.saved.phone).status, 'active')
 
     def test_late_refresh_cannot_overwrite_newer_login_or_saved_database_value(self):
         input_revision = self.saved.credential_revision

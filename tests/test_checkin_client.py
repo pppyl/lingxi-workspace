@@ -1,9 +1,12 @@
 import copy
+from datetime import datetime, timedelta
+import time
 import unittest
 from unittest.mock import Mock
 from curl_cffi import requests
 
-from checkin_client import CheckinClient, CheckinError, ENTRY, FLASH_PRODUCT, _official_url
+from checkin_client import CheckinClient, CheckinError, ENTRY, FLASH_PRODUCT, PreparedFlash, _official_url
+from recharge.cmcc import SHANGHAI
 
 
 SNAPSHOT = {'phone': '13800000000', 'cookie': 'JSESSIONID=fake', 'profile': {}, 'credential_revision': 1}
@@ -21,7 +24,7 @@ class Response:
 
 class ProtocolSession:
     def __init__(self, *, signed=True, now=NOW):
-        self.headers, self.calls, self.signed, self.now = {}, [], signed, now
+        self.headers, self.cookies, self.calls, self.signed, self.now = {}, {}, [], signed, now
         self.stock, self.claimed = 1, False
         self.identity = {'mobile': SNAPSHOT['phone'], 'channel': 'app'}
         self.today_status = None
@@ -228,6 +231,83 @@ class CheckinProtocolTests(unittest.TestCase):
         with self.assertRaises(CheckinError):
             self.client(session).flash('a-purchase')
         self.assertEqual(session.calls, [])
+
+
+class PreparedFlashTests(unittest.TestCase):
+    def setUp(self):
+        self.primary, self.workers = ProtocolSession(), []
+        self.primary.cookies['HLWHD_SESSION_TOKEN'] = 'fake-activity-session'
+        self.provider = Mock(return_value=copy.deepcopy(SNAPSHOT))
+        def worker():
+            session = ProtocolSession()
+            session.close = Mock()
+            self.workers.append(session)
+            return session
+        self.client = CheckinClient(self.provider, session_factory=lambda: self.primary,
+                                   worker_session_factory=worker)
+        self.settings = {'burst_count': 40, 'burst_interval': 0.05, 'burst_workers': 3}
+
+    def test_burst_reuses_one_sso_but_leases_independent_warmed_sessions(self):
+        result = self.client.flash(FLASH_PRODUCT, burst=self.settings)
+        self.assertEqual((result['state'], result['attempt_count']), ('success', 1))
+        sso_calls = [c for c in self.primary.calls if '/qwhdsso/appTokenLogin' in c[1]]
+        self.assertEqual(len(sso_calls), 1)
+        self.assertEqual(len(self.workers), 3)
+        mutations = []
+        for worker in self.workers:
+            self.assertEqual(worker.cookies['HLWHD_SESSION_TOKEN'], 'fake-activity-session')
+            self.assertEqual(worker.headers['Referer'], ENTRY)
+            self.assertTrue(worker.calls[0][1].endswith('/info/commonInfo'))
+            mutations.extend(c for c in worker.calls if c[1].endswith('/redeem'))
+            worker.close.assert_called_once_with()
+        self.assertEqual([c[2] for c in mutations], [{'secId': '123', 'prizeId': 456}])
+        self.assertNotIn('cookie', str(result))
+        self.assertNotIn('fake-activity-session', str(result))
+
+    def test_preparation_waits_for_noon_even_if_official_zone_started_earlier(self):
+        target = datetime.fromtimestamp(NOW/1000, SHANGHAI)
+        zone = {'id': 123, 'startTime': NOW-3600000, 'endTime': NOW+3600000,
+                'prize': {'id': 456, 'status': '0', 'leaveStock': 1}}
+        self.client._inspect = Mock(return_value=({'server_time': (target-timedelta(seconds=30)).isoformat(),
+                'today_state': 'signed', 'flash_state': 'available'}, [zone]))
+        prepared = PreparedFlash(self.client, self.primary, copy.deepcopy(SNAPSHOT))
+        self.addCleanup(prepared.close)
+        original = self.client._post
+        def post(worker, path, *args, **kwargs):
+            worker.now = NOW-30000
+            return original(worker, path, *args, **kwargs)
+        self.client._post = post
+        began = time.monotonic()
+        prepared.prepare(2, target)
+        self.assertTrue(prepared.ready)
+        self.assertGreaterEqual(prepared.start_monotonic, began+30)
+        self.assertTrue(all(len(worker.calls) == 1 for worker in self.workers))
+
+    def test_changed_credentials_after_warmup_prevent_all_redeems(self):
+        from checkin_flash import run_flash_burst
+        prepared = PreparedFlash(self.client, self.primary, copy.deepcopy(SNAPSHOT))
+        self.addCleanup(prepared.close)
+        prepared.prepare(3, None)
+        self.provider.return_value = {**SNAPSHOT, 'credential_revision': 2, 'cookie': 'JSESSIONID=new'}
+        result = run_flash_burst(prepared, self.settings, Mock(), lambda: False)
+        self.assertEqual((result['state'], result['attempt_count']), ('failed', 0))
+        self.assertEqual(result['attempts'][0]['code'], 'APP_CREDENTIALS_CHANGED')
+        self.assertFalse(any(c[1].endswith('/redeem') for w in self.workers for c in w.calls))
+
+    def test_only_busy_or_not_started_replies_allow_following_requests(self):
+        prepared = PreparedFlash(self.client, self.primary, copy.deepcopy(SNAPSHOT))
+        self.addCleanup(prepared.close)
+        prepared.prepare(1, None)
+        worker = self.workers[0]
+        for code, state in [('NET_ERROR', 'retryable'), ('NOT_TIME_IN', 'retryable'),
+                            ('PRIZE_NO_STOCK', 'terminal'), ('PRIZE_LIMIT_MONTH', 'terminal'),
+                            ('UNKNOWN', 'terminal')]:
+            worker.post = Mock(return_value=Response({'code': 'FAIL', 'status': code}))
+            self.assertEqual(prepared.send(before_submit=Mock())['state'], state)
+        worker.post = Mock(return_value=Response({'code': 'FAIL', 'status': 'RISK_VERIFY'}))
+        with self.assertRaises(CheckinError) as raised:
+            prepared.send(before_submit=Mock())
+        self.assertEqual(raised.exception.code, 'VERIFICATION_REQUIRED')
 
 
 if __name__ == '__main__':

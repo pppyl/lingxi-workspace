@@ -1,0 +1,22 @@
+[
+  {
+    "file": "Chaquopy-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/chaquo/chaquopy/master/LICENSE.txt",
+    "sha256": "345a9fdfeed355d37b18569ef277ba56eb0ab7c0b17a08a90163ce8d33d2b862"
+  },
+  {
+    "file": "OkHttp-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/square/okhttp/master/LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "file": "Okio-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/square/okio/master/LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "file": "Kotlin-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/JetBrains/kotlin/master/license/LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  }
+]

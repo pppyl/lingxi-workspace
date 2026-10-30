@@ -48,6 +48,7 @@ class UnifiedLogins:
                             or not isinstance(item.get('cookie'), str) or not item['cookie']
                             or not isinstance(item.get('token', ''), str) or not isinstance(item.get('profile', {}), dict)
                             or not isinstance(item.get('name', ''), str)
+                            or item.get('status', 'active') not in ('active', 'login_required')
                             or not isinstance(item.get('app_context', {}), dict)
                             or isinstance(item.get('credential_revision', 1), bool)
                             or not isinstance(item.get('credential_revision', 1), int)
@@ -55,7 +56,8 @@ class UnifiedLogins:
                         raise ValueError
                     record = SavedLogin(item['id'], item['phone'], item['cookie'], item.get('profile', {}),
                                         item.get('token', ''), item.get('name', '')[:40], float(item.get('created_at', time.time())),
-                                        'restoring', 0, '已读取本机加密登录态，正在自动校验和恢复会话',
+                                        item.get('status', 'active'), 0,
+                                        '账号需要短信验证' if item.get('status') == 'login_required' else '已读取本机登录态，后台自动维护',
                                         deepcopy(item.get('app_context', {})), item.get('credential_revision', 1))
                     records[record.phone] = record
                 self.records = records
@@ -70,7 +72,8 @@ class UnifiedLogins:
             try:
                 self.storage.save([{'id':r.id, 'phone':r.phone, 'cookie':r.cookie, 'profile':r.profile,
                     'token':r.token, 'name':r.name, 'created_at':r.created_at,
-                    'app_context':r.app_context, 'credential_revision':r.credential_revision} for r in self.records.values()])
+                    'app_context':r.app_context, 'credential_revision':r.credential_revision,
+                    'status':'login_required' if r.status == 'login_required' else 'active'} for r in self.records.values()])
                 self.warning = ''
             except LoginStorageError as error:
                 self.warning = str(error)
@@ -80,8 +83,11 @@ class UnifiedLogins:
             if (self.records.get(saved.phone) is not saved or
                     expected_revision is not None and saved.credential_revision != expected_revision):
                 return False
+            login_changed = (saved.status == 'login_required') != (status == 'login_required')
             saved.status, saved.message = status, message
             saved.checked_at = time.time()
+            if login_changed:
+                self.save()
             return True
 
     def phone_lock(self, phone):
@@ -154,8 +160,8 @@ class UnifiedLogins:
             record.token = token if token is not None else '' if changed else record.token
             record.credential_revision += 1
             self.credential_revisions[phone] = record.credential_revision
-            record.status, record.checked_at = 'restoring', 0
-            record.message = 'APP 凭据已更新，正在同步业务会话'
+            record.status, record.checked_at = 'active', 0
+            record.message = 'APP 会话已维护，业务使用最新凭据'
             self.save()
             return record
 

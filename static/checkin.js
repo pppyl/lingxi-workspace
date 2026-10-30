@@ -70,6 +70,7 @@ function render(){
   const shown=visibleTasks(),available=new Set(shown.filter(stoppable).map(task=>task.id));
   for(const id of selectedTasks)if(!available.has(id))selectedTasks.delete(id);
   $('checkin-task-count').textContent=model.tasks.length;
+  $('checkin-burst-summary').textContent=`默认单账号 ${model.settings?.burst_workers??8} 并发 · 各账号独立`;
   for(const [kind,id] of [['signin','checkin-sign-count'],['flash','checkin-flash-count']]){
     const count=new Set(model.tasks.filter(task=>task.kind===kind&&task.enabled).map(task=>task.login_id)).size;
     $(id).textContent=count?`已开启 ${count} 个账号`:'尚未配置';
@@ -81,6 +82,7 @@ function render(){
     check.addEventListener('change',()=>{if(check.checked)selectedTasks.add(task.id);else selectedTasks.delete(task.id);updateSelection();});selection.append(check);
     const account=node('td');account.append(node('strong','',task.account_name),node('small','',task.phone_masked));
     const kind=node('td');kind.append(node('strong','',kindNames[task.kind]||task.kind),node('small','',task.kind==='flash'?'每天 12:00':'每天一次'));
+    if(task.kind==='flash')kind.append(node('small','',`${task.burst_count??40} 次 · ${task.burst_interval??0.05} 秒`),node('small','',`单账号 ${task.burst_workers??8} 并发`));
     const time=node('td','checkin-task-time');time.append(node('time','',dateFormat(task.next_run_at).replace(' ','\n')));
     if(task.last_run_at)time.append(node('small','','上次 '+dateFormat(task.last_run_at)));
     const state=node('td');state.append(badge(task.state));
@@ -124,6 +126,7 @@ function updateConfiguration(){
 async function openEditor(asManual=false,loginId=''){
   if(working||!await refresh())return;
   manual=asManual;$('checkin-form').reset();$('checkin-form-error').hidden=true;
+  $('checkin-burst-workers').value=model.settings?.burst_workers??8;
   $('checkin-editor-title').textContent=manual?'立即签到':'配置自动任务';
   $('checkin-editor-description').textContent=manual?'使用所选共享账号执行免费签到，每个账号今天最多一次。':'共享账号只需登录一次，选择后统一设置。';
   $('checkin-automatic-options').hidden=manual;$('checkin-save').textContent=manual?'开始签到':'保存自动任务';
@@ -146,6 +149,7 @@ async function openEditor(asManual=false,loginId=''){
     $('checkin-signin-enabled').checked=!!sign?.enabled;$('checkin-flash-enabled').checked=!!flash?.enabled&&flashReady;
     if(sign?.next_run_at)$('checkin-signin-time').value=new Date(sign.next_run_at).toLocaleTimeString('en-GB',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
     if(flash?.product_id)$('checkin-product').value=flash.product_id;
+    if(flash)for(const key of ['count','interval','workers'])$('checkin-burst-'+key).value=flash['burst_'+key]??({count:40,interval:0.05,workers:8}[key]);
   }
   updateAccountSelection();updateConfiguration();$('checkin-editor').showModal();
 }
@@ -167,7 +171,20 @@ function renderHistory(){
     $('checkin-history-description').textContent=`${task.account_name} · ${kindNames[task.kind]||task.kind}`;
     records=[...(task.history||[])].reverse();
   }
-  const rows=records.map(record=>{const row=node('article','checkin-history-item'),head=node('div');head.append(node('time','',(record.kind?(kindNames[record.kind]||record.kind)+' · ':'')+dateFormat(record.time)),badge(record.state));row.append(head,node('p','',record.message));return row;});
+  const rows=records.map(record=>{
+    const row=node('article','checkin-history-item'),head=node('div');head.append(node('time','',(record.kind?(kindNames[record.kind]||record.kind)+' · ':'')+dateFormat(record.time)),badge(record.state));row.append(head,node('p','',record.message));
+    if(record.attempts?.length){
+      const details=node('details','checkin-attempts'),table=node('table'),thead=node('thead'),titles=node('tr'),body=node('tbody');
+      details.append(node('summary','',`查看 ${record.attempt_count} 次请求明细`));
+      for(const title of ['请求','实际发起 · 北京时间','结果'])titles.append(node('th','',title));
+      thead.append(titles);
+      for(const attempt of record.attempts){
+        const item=node('tr');item.append(node('td','',attempt.followup?'延后补试':`第 ${attempt.index} 次`),node('td','',attempt.sent_at?dateFormat(attempt.sent_at)+'.'+(attempt.sent_at.match(/\.(\d{3})/)?.[1]||'000'):'未发送'),node('td','',attempt.message));body.append(item);
+      }
+      table.append(thead,body);details.append(table);row.append(details);
+    }
+    return row;
+  });
   if(!rows.length)rows.push(node('p','checkin-empty',historyAccountId?'尚无客户端执行记录，最近签到结果可在账号表中查看。':'还没有执行记录。'));
   const scroll=$('checkin-history').scrollTop;$('checkin-history-body').replaceChildren(...rows);$('checkin-history').scrollTop=scroll;
 }
@@ -176,6 +193,27 @@ function openAccountHistory(id){historyId='';historyAccountId=id;renderHistory()
 $('checkin-configure').disabled=true;$('checkin-sign-now').disabled=true;
 $('checkin-refresh').addEventListener('click',refresh);
 $('checkin-configure').addEventListener('click',()=>openEditor());$('checkin-sign-now').addEventListener('click',()=>openEditor(true));
+$('checkin-settings-open').addEventListener('click',async()=>{
+  if(working||!await refresh())return;
+  $('checkin-settings-form').reset();$('checkin-settings-error').hidden=true;
+  $('checkin-settings-workers').value=model.settings.burst_workers;
+  $('checkin-settings-workers').dispatchEvent(new Event('input'));
+  $('checkin-settings').showModal();
+});
+$('checkin-settings-workers').addEventListener('input',()=>{
+  const workers=Number($('checkin-settings-workers').value);
+  $('checkin-settings-example').textContent=Number.isInteger(workers)&&workers>=1&&workers<=32?`例如 10 个账号同时执行，理论上最多有 ${workers*10} 个请求在途；实际取决于发起间隔和接口响应速度。`:'可设置 1–32 个并发线程。';
+});
+$('checkin-settings-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(working)return;
+  working=true;$('checkin-settings-save').disabled=true;$('checkin-settings-error').hidden=true;
+  try{
+    const result=await api('/api/checkin/settings',{burst_workers:Number($('checkin-settings-workers').value),apply_existing:$('checkin-settings-apply').checked});
+    $('checkin-settings').close();feedback(result.message,true);await refresh();
+  }catch(error){$('checkin-settings-error').textContent=error.message;$('checkin-settings-error').hidden=false;}
+  finally{working=false;$('checkin-settings-save').disabled=false;render();}
+});
+$('checkin-settings').addEventListener('cancel',event=>{if(working)event.preventDefault();});
 $('checkin-account-options').addEventListener('change',updateAccountSelection);
 $('checkin-select-accounts').addEventListener('click',()=>{const options=[...$('checkin-account-options').querySelectorAll('input:not(:disabled)')],check=!options.every(input=>input.checked);options.forEach(input=>input.checked=check);updateAccountSelection();});
 for(const id of ['checkin-signin-enabled','checkin-flash-enabled','checkin-product'])$(id).addEventListener('change',updateConfiguration);
@@ -188,7 +226,7 @@ $('checkin-form').addEventListener('submit',async event=>{
     if(!manual&&!signin&&!flash)throw new Error('请至少启用一项自动任务。');
     if(!manual&&flash&&!model.products.some(product=>product.id===productId&&product.selectable===true))throw new Error('请选择已确认可参与的秒杀商品。');
     working=true;$('checkin-save').disabled=true;$('checkin-form-error').hidden=true;
-    const result=await api(manual?'/api/checkin/run':'/api/checkin/tasks/save',manual?{login_ids:loginIds,kind:'signin'}:{login_ids:loginIds,signin_enabled:signin,signin_time:$('checkin-signin-time').value,flash_enabled:flash,product_id:productId});
+    const result=await api(manual?'/api/checkin/run':'/api/checkin/tasks/save',manual?{login_ids:loginIds,kind:'signin'}:{login_ids:loginIds,signin_enabled:signin,signin_time:$('checkin-signin-time').value,flash_enabled:flash,product_id:productId,burst_count:Number($('checkin-burst-count').value),burst_interval:Number($('checkin-burst-interval').value),burst_workers:Number($('checkin-burst-workers').value)});
     $('checkin-editor').close();feedback(result.message||(manual?'签到请求已完成，请查看各账号执行记录。':'自动任务已保存。'),true);await refresh();
   }catch(error){$('checkin-form-error').textContent=error.message;$('checkin-form-error').hidden=false;}
   finally{working=false;$('checkin-save').disabled=false;render();}

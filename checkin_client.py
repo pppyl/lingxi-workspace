@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+from queue import SimpleQueue
 import re
+import time
 from urllib.parse import urljoin, urlsplit
 
-from curl_cffi import requests
+from http_transport import requests
 
-from recharge.cmcc import APP_UA, parse_server_time
+from recharge.cmcc import APP_UA, SHANGHAI, parse_server_time
 
 
 ENTRY = 'https://wx.10086.cn/qwhdhub/qwhdmark/1021122301'
@@ -75,9 +77,12 @@ def _in_window(zone, now):
 
 
 class CheckinClient:
-    def __init__(self, credentials_provider, *, session_factory=None):
+    def __init__(self, credentials_provider, *, session_factory=None, worker_session_factory=None):
         self.credentials_provider = credentials_provider
         self.session_factory = session_factory or (lambda: requests.Session(impersonate='chrome'))
+        # A leased session is used by one worker at a time, so its warm curl
+        # connection can move between pool threads without sharing a handle.
+        self.worker_session_factory = worker_session_factory or (lambda: requests.Session(impersonate='chrome', use_thread_local_curl=False))
 
     def _snapshot(self):
         value = self.credentials_provider()
@@ -252,9 +257,18 @@ class CheckinClient:
             code = str(response.get('status') or response.get('code') or 'UNKNOWN')
             return {**updated, 'state': 'failed', 'message': RESULT_MESSAGES.get(code, '官方尚未确认签到成功（'+code[:60]+'）'), 'submitted': True}
 
-    def flash(self, product_id, *, before_submit=None):
+    def flash(self, product_id, *, before_submit=None, burst=None, cancelled=None, target_at=None):
         if product_id != FLASH_PRODUCT:
             raise CheckinError('请选择已确认的月末2元话费券', 'INVALID_PRODUCT', 400)
+        if burst is not None:
+            from checkin_flash import run_flash_burst
+            with self._session() as (client, snapshot):
+                prepared = PreparedFlash(self, client, snapshot)
+                try:
+                    prepared.prepare(burst['burst_workers'], target_at)
+                    return run_flash_burst(prepared, burst, before_submit, cancelled or (lambda: False))
+                finally:
+                    prepared.close()
         with self._session() as (client, snapshot):
             result, zones = self._inspect(client)
             if result['today_state'] != 'signed' or result['flash_state'] != 'available':
@@ -272,3 +286,76 @@ class CheckinClient:
                         'message': '秒杀领取成功，请在 APP 我的奖品中查看', 'submitted': True}
             code = str(response.get('status') or response.get('code') or 'UNKNOWN')
             return {**result, 'state': 'skipped', 'message': RESULT_MESSAGES.get(code, '官方未允许领取（'+code[:60]+'）'), 'submitted': True}
+
+
+class PreparedFlash:
+    def __init__(self, owner, client, snapshot):
+        self.owner, self.client, self.snapshot = owner, client, snapshot
+        self.ready, self.sessions, self.available = False, [], SimpleQueue()
+
+    def prepare(self, workers, target_at):
+        self.result, zones = self.owner._inspect(self.client)
+        now = datetime.fromisoformat(self.result['server_time'])
+        if self.result['today_state'] != 'signed':
+            self.result['flash_message'] = '先完成今日签到，本轮未发送'
+            return
+        if self.result['flash_state'] == 'already_claimed':
+            return
+        target = target_at or now.replace(hour=12, minute=0, second=0, microsecond=0)
+        eligible = [zone for zone in zones if _in_window(zone, target)
+                    and _zone_time(zone['endTime']) > now
+                    and str(zone['prize'].get('status')) != '1'
+                    and float(zone['prize'].get('leaveStock') or 0) > 0]
+        if not eligible:
+            self.result['flash_message'] = '本场未开放或奖品已抢完，本轮未发送'
+            return
+        self.zone = min(eligible, key=lambda zone: _zone_time(zone['startTime']))
+        best = None
+        for _ in range(workers):
+            worker = self.owner.worker_session_factory()
+            self.sessions.append(worker)
+            worker.headers.update(self.client.headers)
+            worker.cookies.update(self.client.cookies)
+            began = time.monotonic()
+            common = _data(self.owner._post(worker, 'info/commonInfo'))
+            received = time.monotonic()
+            server = parse_server_time(common.get('sysTime')) if isinstance(common, dict) else None
+            if server is None:
+                raise CheckinError('预热未取得官方时间，本轮未提交', 'SERVER_TIME_MISSING')
+            sample = (received-began, received, server)
+            if best is None or sample[0] < best[0]:
+                best = sample
+            self.available.put(worker)
+        self.owner._current(self.snapshot)
+        _, anchor, server = best
+        # Anchor at receipt, without subtracting an assumed network delay. This
+        # follows the official clock and never deliberately sends before open.
+        self.start_monotonic = anchor + (max(target, _zone_time(self.zone['startTime']))-server).total_seconds()
+        self.end_monotonic = anchor + (_zone_time(self.zone['endTime'])-server).total_seconds()
+        self.ready = True
+
+    @staticmethod
+    def local_time():
+        return datetime.now(SHANGHAI).isoformat(timespec='milliseconds')
+
+    def send(self, *, before_submit):
+        worker = self.available.get()
+        try:
+            response = self.owner._post(worker, 'markSeckill/redeem',
+                {'secId': str(self.zone['id']), 'prizeId': self.zone['prize']['id']},
+                snapshot=self.snapshot, before_submit=before_submit)
+        finally:
+            self.available.put(worker)
+        if response.get('code') == 'SUCCESS':
+            return {'state': 'success', 'code': 'SUCCESS', 'message': '秒杀领取成功，请在 APP 我的奖品中查看'}
+        code = str(response.get('status') or response.get('code') or 'UNKNOWN')
+        message = '官方服务繁忙' if code == 'NET_ERROR' else RESULT_MESSAGES.get(code, '官方未允许领取（'+code[:60]+'）')
+        return {'state': 'retryable' if code in ('NET_ERROR', 'NOT_TIME_IN') else 'terminal', 'code': code, 'message': message}
+
+    def reconcile(self):
+        result, _ = self.owner._inspect(self.client)
+        return result
+
+    def close(self):
+        for worker in self.sessions:
+            worker.close()

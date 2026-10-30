@@ -21,6 +21,8 @@
     ['recharge','/recharge/','活动与奖品'],
     ['recharge-tasks','/recharge/static/tasks.html','领取任务'],
     ['checkin','/checkin','签到有礼'],
+    ['monthly-coupon','/monthly-coupon','每月话费券'],
+    ['coupons','/coupons','我的卡券'],
   ];
   const groups = [
     {title:'灵犀对话',icon:'chat',keys:['chat','lingxi-tasks']},
@@ -31,7 +33,9 @@
   nav.innerHTML = `<a class="workspace-brand" href="/" aria-label="本地工具台首页"><span class="workspace-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#84beff" d="m16 2 13 7-13 7L3 9Z"/><path fill="#398cff" d="m3 12 11 6v13L3 25Z"/><path fill="#b9daff" d="m18 18 11-6v13l-11 6Z"/></svg></span><span>本地工具台<small>LOCAL WORKSPACE</small></span></a>
     <div class="workspace-nav-label">工作空间</div><nav aria-label="主导航"><a href="/" class="workspace-nav-item${page === 'home' ? ' active' : ''}"${page === 'home' ? ' aria-current="page"' : ''}>${icon('grid')}<span>工作台</span></a>
     ${groups.map(group => `<details class="workspace-nav-group${currentGroup === group ? ' contains-current' : ''}" open><summary>${icon(group.icon)}<span>${group.title}</span><svg class="workspace-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary><div class="workspace-subnav">${pages.filter(item => group.keys.includes(item[0])).map(([key,url,label]) => `<a href="${url}" class="workspace-subnav-item${page === key ? ' active' : ''}"${page === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</div></details>`).join('')}
-    <a href="/checkin" class="workspace-nav-item${page === 'checkin' ? ' active' : ''}"${page === 'checkin' ? ' aria-current="page"' : ''}>${icon('calendar')}<span>签到有礼</span></a></nav>
+    <a href="/checkin" class="workspace-nav-item${page === 'checkin' ? ' active' : ''}"${page === 'checkin' ? ' aria-current="page"' : ''}>${icon('calendar')}<span>签到有礼</span></a>
+    <a href="/monthly-coupon" class="workspace-nav-item${page === 'monthly-coupon' ? ' active' : ''}"${page === 'monthly-coupon' ? ' aria-current="page"' : ''}>${icon('ticket')}<span>每月话费券</span></a>
+    <a href="/coupons" class="workspace-nav-item${page === 'coupons' ? ' active' : ''}"${page === 'coupons' ? ' aria-current="page"' : ''}>${icon('ticket')}<span>我的卡券</span></a></nav>
     <div class="workspace-nav-divider"></div><button type="button" class="workspace-nav-item${page === 'accounts' ? ' active' : ''}" data-account-window>${icon('users')}<span>账号管理</span></button>
     <div class="workspace-nav-footer"><span class="workspace-service-dot"></span><div>本地服务<small id="workspace-host"></small></div><span class="workspace-private">本机</span></div>`;
   nav.querySelector('#workspace-host').textContent = location.host;

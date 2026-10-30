@@ -23,8 +23,8 @@ try:
     from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
 except ImportError:
     TripleDES = algorithms.TripleDES
-from curl_cffi import requests, CurlHttpVersion
-from curl_cffi.requests.exceptions import RequestException
+from http_transport import requests, CurlHttpVersion
+from http_transport import RequestException
 
 REQUEST_KEY = b"bAIgvwAuA4tbDr9d"
 RESPONSE_KEY = b"GS7VelkJl5IT1uwQ"

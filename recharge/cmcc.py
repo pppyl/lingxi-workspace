@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit, urljoin
 
-from curl_cffi import requests
+from http_transport import requests
 from app_login import AppLoginSession, AppLoginError
 from runtime_paths import RECHARGE_DATA_DIR
 
@@ -172,7 +172,11 @@ class ActivityClient:
     def __init__(self, profile_dir=None, *, app_credentials_provider=None):
         self.mode = 'none'
         self.http = requests.Session(impersonate='chrome')
-        self.bridge = BrowserBridge(profile_dir)
+        if os.environ.get('LINGXI_ANDROID') == '1':
+            from android_activity_bridge import AndroidActivityBridge
+            self.bridge = AndroidActivityBridge(profile_dir)
+        else:
+            self.bridge = BrowserBridge(profile_dir)
         self.const_id = ''
         self.last_claim = 0.0
         self.uncertain = False

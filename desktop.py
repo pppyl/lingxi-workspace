@@ -107,6 +107,7 @@ def main():
     app.extensions['session_maintenance'].start()
     app.extensions['lingxi_scheduler'].start()
     app.extensions['checkin_scheduler'].start()
+    app.extensions['monthly_coupon_scheduler'].start()
     app.extensions['recharge_app'].extensions['scheduler'].start()
     try:
         if options.headless:quit_event.wait()
@@ -127,6 +128,7 @@ def main():
         app.extensions['session_maintenance'].stop()
         app.extensions['lingxi_scheduler'].shutdown()
         app.extensions['checkin_scheduler'].shutdown()
+        app.extensions['monthly_coupon_scheduler'].shutdown()
         app.extensions['recharge_app'].extensions['scheduler'].stop()
         server.close()
         control_file.unlink(missing_ok=True)

@@ -96,6 +96,9 @@ class AccountCenterTests(unittest.TestCase):
         for saved in (self.a, self.b):
             self.http.post('/api/login/select', json={'id': saved.id})
             self.http.post('/recharge/api/login/attach', json={'login_id': saved.id}, headers=self.headers)
+        checkin = self.app.extensions['checkin_scheduler']
+        for saved in (self.a, self.b):
+            checkin.save({'login_ids': [saved.id], 'signin_enabled': True, 'flash_enabled': False})
         response = self.http.post('/api/logins/logout', json={'id': self.a.id})
         self.assertEqual(response.status_code, 200)
         self.assertFalse(self.states()[self.a.id].auth_code)
@@ -104,6 +107,8 @@ class AccountCenterTests(unittest.TestCase):
         self.assertEqual(len(self.http.get('/api/logins').json['accounts']), 1)
         self.assertEqual(self.clients[0].mode, 'none')
         self.assertEqual(self.clients[1].mode, 'app')
+        self.assertTrue(checkin.data['tasks'])
+        self.assertTrue(all(task['login_id'] == self.b.id for task in checkin.data['tasks'].values()))
 
     @patch('app.verify_token')
     def test_center_cannot_logout_an_account_with_a_live_reply(self, verify):
@@ -222,6 +227,28 @@ class AccountCenterTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json['reused'])
         factory.assert_not_called()
+
+    @patch('app.verify_token')
+    @patch('app.exchange_cookie', return_value='renewed-token')
+    @patch('app.AppLoginSession')
+    def test_explicit_relogin_refreshes_an_active_account_without_changing_its_identity(self, factory, exchange, verify):
+        flow = factory.return_value = self.sms_flow()
+        original = self.a.id, self.a.name, self.a.created_at, self.a.credential_revision
+        before_cookie = self.a.cookie
+        response = self.http.post('/api/logins/relogin/sms', json={
+            'id': self.a.id, 'force': True, 'phone': self.b.phone})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json['sent'])
+        flow.send_sms.assert_called_once_with(self.a.phone)
+        self.assertEqual(self.a.cookie, before_cookie)
+        response = self.http.post('/api/logins/relogin', json={
+            'id': self.a.id, 'force': True, 'code': '123456', 'name': '不应改名'})
+        self.assertEqual(response.status_code, 200)
+        flow.login.assert_called_once_with(self.a.phone, '123456')
+        self.assertEqual((self.a.id, self.a.name, self.a.created_at), original[:3])
+        self.assertEqual(self.a.credential_revision, original[3]+1)
+        self.assertEqual(self.a.token, 'renewed-token')
+        self.assertEqual(len(self.app.extensions['unified_logins'].records), 2)
 
     @patch('app.AppLoginSession')
     def test_relogin_rejects_missing_or_logged_out_account_without_sending(self, factory):

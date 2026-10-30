@@ -4,11 +4,7 @@ const managerStyles = document.createElement('link');
 managerStyles.rel = 'stylesheet'; managerStyles.href = '/static/account-manager.css';
 document.head.append(managerStyles);
 let managerDialog, managerReady;
-document.addEventListener('click', event => {
-  const button = event.target.closest('[data-account-window]');
-  if (!button) return;
-  event.preventDefault();
-  const reloginId = button.dataset.accountRelogin;
+function openAccountManager({reloginId = '', focusId = '', message = ''} = {}) {
   if (!managerDialog) {
     managerDialog = document.createElement('dialog');
     managerDialog.className = 'account-manager-dialog';
@@ -40,11 +36,21 @@ document.addEventListener('click', event => {
       managerDialog.setAttribute('aria-labelledby', 'modal-account-manager-title');
       return manager;
     }).catch(error => { loading.textContent = error.message; });
-  } else if (!reloginId) {
+  } else if (!reloginId && !focusId) {
     managerReady.then(manager => { if (manager) manager.refresh(); });
   }
   managerDialog.showModal();
   if (reloginId) managerReady.then(manager => { if (manager) manager.relogin(reloginId); });
+  else if (focusId) managerReady.then(manager => { if (manager) manager.focus(focusId, message); });
+}
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-account-window]');
+  if (!button) return;
+  event.preventDefault();
+  openAccountManager({reloginId:button.dataset.accountRelogin});
+});
+window.addEventListener('open-account-manager', event => {
+  openAccountManager({focusId:event.detail.loginId, message:event.detail.message});
 });
 window.publishAccountsChanged = () => {
   accountChannel?.postMessage({type: 'accounts-changed'});
