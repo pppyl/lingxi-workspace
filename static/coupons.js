@@ -17,6 +17,8 @@
   let successToastTimer = null;
   const availableCounts = new Map();
   let countsGeneration = 0;
+  let refreshPending = false;
+  let pendingExpiryTimer = null;
 
   function node(tag,className='',text){const item=document.createElement(tag);item.className=className;if(text!==undefined)item.textContent=text;return item;}
   function dateText(value){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?value:formatter.format(date);}
@@ -25,6 +27,10 @@
   async function api(url,payload){
     const accountId=payload?.login_id||loginId;
     const response=await fetch(url,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!(response.headers.get('Content-Type')||'').includes('application/json')){
+      const error=new Error(`本机服务返回异常页面（HTTP ${response.status}），请重启或更新应用后重试。`);
+      error.status=response.status;error.code='LOCAL_API_RESPONSE_INVALID';throw error;
+    }
     const result=await response.json();
     if(accountId&&loginRequiredCodes.includes(result.code)&&!$('coupons-use').open){
       window.dispatchEvent(new CustomEvent('open-account-manager',{detail:{loginId:accountId,message:'当前账号需要恢复登录，请在高亮行点击“重新登录”，完成后返回重试。'}}));
@@ -34,6 +40,29 @@
   }
   function feedback(message){$('coupons-feedback').textContent=message;$('coupons-feedback').hidden=!message;}
   function emptyRow(message){const row=node('tr'),cell=node('td','coupons-empty',message);cell.colSpan=6;row.append(cell);return row;}
+
+  function setPendingOrders(orders){
+    clearTimeout(pendingExpiryTimer);pendingExpiryTimer=null;
+    const now=Date.now();
+    pendingOrders=orders.map(order=>({...order,_deadline:order._deadline!==undefined?order._deadline:typeof order.expires_in==='number'?now+order.expires_in*1000:null}));
+    const deadlines=pendingOrders.map(order=>order._deadline).filter(deadline=>deadline!==null);
+    if(!deadlines.length)return;
+    const accountId=loginId,version=requestVersion,delay=Math.max(0,Math.ceil(Math.min(...deadlines)-now));
+    pendingExpiryTimer=setTimeout(async()=>{
+      if(accountId!==loginId||version!==requestVersion)return;
+      const expired=new Set(pendingOrders.filter(order=>order._deadline!==null&&order._deadline<=Date.now()).map(order=>order.order_id));
+      setPendingOrders(pendingOrders.filter(order=>!expired.has(order.order_id)));
+      if(expired.has(paymentOrder)){closeUse(true);feedback('该订单付款窗口已结束，已移出待支付列表。');}
+      render();
+      try{
+        const result=await api('/api/coupons/pending?'+new URLSearchParams({login_id:accountId}));
+        if(accountId===loginId&&version===requestVersion){setPendingOrders(result.pending_orders);render();}
+      }catch{
+        // Local expiry already applied. A later normal refresh will sync storage;
+        // a network failure must not start a payment/query retry loop.
+      }
+    },delay);
+  }
 
   function renderAccounts(){
     const selected=accounts.find(account=>account.id===loginId);
@@ -48,7 +77,7 @@
       const countBadge=node('span','coupons-account-coupons '+(ready?(count.value>0?'has-coupons':'no-coupons'):'unknown'),ready?`可用 ${count.value} 张`:account.status!=='active'?'—':count?.state==='failed'?'未获取':'查券中');
       countBadge.title=ready?'当前可使用的卡券数量':count?.error||'正在查询当前账号的可用卡券数量';
       label.append(name,countBadge,status);button.append(label,node('small','',account.phone_masked));
-      button.addEventListener('click',()=>{if(account.id===loginId)return;closeUse(true);loginId=account.id;renderAccounts();loadCards();});return button;
+      button.addEventListener('click',()=>{if(account.id===loginId)return loadCards();closeUse(true);loginId=account.id;renderAccounts();return loadCards();});return button;
     }));
   }
 
@@ -117,20 +146,20 @@
 
   async function loadCards(more=false){
     const selected=accounts.find(account=>account.id===loginId),version=++requestVersion;
-    if(!more){items=[];pendingOrders=[];page=0;total=null;hasMore=false;queryFailed=false;feedback('');}
+    if(!more){items=[];setPendingOrders([]);page=0;total=null;hasMore=false;queryFailed=false;feedback('');}
     if(!selected){loading=false;render();return;}
     loading=true;render();
     try{
       if(!more){
         const pending=await api('/api/coupons/pending?'+new URLSearchParams({login_id:loginId}));
         if(version!==requestVersion)return;
-        pendingOrders=pending.pending_orders;render();
+        setPendingOrders(pending.pending_orders);render();
       }
       if(selected.status!=='active')return;
       const query=new URLSearchParams({login_id:loginId,state,page:String(more?page+1:1),sort:$('coupons-sort').value});
       const result=await api('/api/coupons?'+query);
       if(version!==requestVersion)return;
-      items=more?[...items,...result.items]:result.items;pendingOrders=result.pending_orders||[];page=result.page;total=result.total;hasMore=result.has_more;queryFailed=false;
+      items=more?[...items,...result.items]:result.items;setPendingOrders(result.pending_orders||[]);page=result.page;total=result.total;hasMore=result.has_more;queryFailed=false;
       if(state==='available'){
         availableCounts.set(selected.id,{revision:selected.credential_revision,state:'ready',value:items.filter(item=>item.status==='available').length});
         renderAccounts();
@@ -146,14 +175,14 @@
   }
 
   async function refresh(forceCounts=false){
-    if(refreshing)return;refreshing=true;render();
+    if(refreshing){refreshPending=true;return;}refreshing=true;render();
     try{
       const result=await api('/api/coupons/accounts');accounts=result.accounts;
       if(!accounts.some(account=>account.id===loginId)){closeUse(true);loginId=accounts.find(account=>account.status==='active')?.id||accounts[0]?.id||'';}
       if(accounts.find(account=>account.id===loginId)?.status!=='active'&&!relogin?.required)closeUse(true);
       renderAccounts();loadAvailableCounts(forceCounts);await loadCards();
     }catch(error){feedback(error.message);$('coupons-account-hint').textContent='账号读取失败，请刷新重试。';}
-    finally{refreshing=false;render();}
+    finally{refreshing=false;render();if(refreshPending){refreshPending=false;await refresh();}}
   }
 
   function openDetails(item){
@@ -338,8 +367,10 @@
       }
       captchaRequired=false;$('coupons-use-verification').hidden=true;$('coupons-use-captcha').replaceChildren();
       if(result.state==='closed'){
-        paymentOrder='';$('coupons-use-message').textContent=result.message;
-        $('coupons-use-payment').hidden=true;$('coupons-payment-qr').hidden=true;$('coupons-payment-panel').hidden=true;return;
+        const closedOrder=paymentOrder;paymentOrder='';$('coupons-use-message').textContent=result.message;
+        setPendingOrders(pendingOrders.filter(order=>order.order_id!==closedOrder));render();
+        $('coupons-use-payment').hidden=true;$('coupons-use-payment').removeAttribute('href');
+        $('coupons-payment-url').value='';$('coupons-payment-qr').hidden=true;$('coupons-payment-qr').removeAttribute('src');$('coupons-payment-panel').hidden=true;return;
       }
       $('coupons-use-message').textContent=`实付 ${result.amount} 元 · 订单 ${result.order_id}，请在支付宝核对后付款。`;
       $('coupons-use-payment').href=result.payment_url;$('coupons-use-payment').hidden=false;

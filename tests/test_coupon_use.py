@@ -9,13 +9,13 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from curl_cffi import requests
 
-from coupon_client import CouponError, GCM_KEY, _cbc_decrypt, _cbc_encrypt, _item
-from coupon_use import CouponUseError, CouponUseManager
+from coupon_client import CouponClient, CouponError, GCM_KEY, _cbc_decrypt, _cbc_encrypt, _item
+from coupon_use import CouponUseError, CouponUseManager, PAYMENT_WINDOW_SECONDS
 
 
 PHONE = '13800000000'
@@ -69,6 +69,7 @@ class Environment:
         self.sms_response = {'serialNo': 'private-sms-serial', 'md5': 'private-sms-md5'}
         self.wallet_init = {'msgId': base64.b64encode(_cbc_encrypt('fixture-message-id').encode()).decode()}
         self.detail = {'smsCheck': '1', 'activityId': 'private-detail-activity'}
+        self.detail_response = None
         self.final_response, self.final_error, self.before_final = None, None, None
         self.sdk_token, self.sdk_status = 'official-risk-fixture', 1
 
@@ -77,24 +78,29 @@ class Environment:
             raise CouponUseError('账号不存在。', 'LOGIN_MISSING', 404)
         return deepcopy(self.snapshot)
 
-    def client(self, provider, *, entry=None):
+    def client(self, provider, *, entry=None, credential_cache=None):
         env = self
         env.wallet_entry = entry
         class FakeClient:
+            query = CouponClient.query
+            _json = staticmethod(CouponClient._json)
+
             @contextmanager
-            def _session(self):
+            def _session(self, *, recover_login=True):
                 snapshot = provider()
                 session = Session(env)
                 env.sessions.append(session)
                 def current():
-                    if provider() != snapshot:
+                    if provider()['phone'] != snapshot['phone']:
                         raise CouponError('凭据已更新。', 'APP_CREDENTIALS_CHANGED', 409)
                 try:
-                    yield session, {'number': snapshot['phone'], 'province': '851', 'login_type': '0',
+                    yield session, {'number': snapshot['phone'], 'province': '851', 'login_type': '1',
                         'msg_id': base64.b64encode(_cbc_encrypt('fixture-message-id').encode()).decode()}, current
                 finally:
                     session.closed = True
-        return FakeClient()
+        result = FakeClient()
+        result.credential_cache = credential_cache
+        return result
 
     def recharge(self):
         self.row.update(pCardNo='private-recharge-code', pCardType='001', smsCheck='0',
@@ -137,7 +143,7 @@ class Session:
         if '/pcardAndGiftQry/' in url:
             return Response(encoded({'busiData': [{'batchInfo': [deepcopy(self.env.row)]}]}, gcm=True))
         if '/pcardInfoQry/' in url:
-            return Response(encoded(self.env.detail, gcm=True))
+            return Response(self.env.detail_response if self.env.detail_response is not None else encoded(self.env.detail, gcm=True))
         if '/commonSms/' in url:
             return Response(encoded({}))
         if '/ruleinfo/' in url:
@@ -253,6 +259,62 @@ class CouponUseTests(unittest.TestCase):
         self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456'), result)
         self.assertEqual(len(self.env.final_calls), 1)
 
+    def test_equity_app_channel_keeps_app_user_agent_after_browser_sdk(self):
+        self.env.rights()
+        preview = self.prepare()
+        operation = self.manager.operations[preview['operation_id']]
+        operation.client.headers['User-Agent'] = 'Fixture leadeon/12.5.6'
+        self.manager.sms(preview['operation_id'])
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456',
+            browser_user_agent='Fixture browser SDK')['state'], 'accepted')
+        self.assertEqual(operation.client.headers['User-Agent'], 'Fixture leadeon/12.5.6')
+        self.assertEqual(self.env.sdk_calls[-1][2]['User-Agent'], 'Fixture browser SDK')
+        self.assertEqual(self.env.final_calls[-1][1]['channelId'], '11')
+
+    def test_equity_official_success_with_empty_or_scalar_data_is_accepted_once(self):
+        self.env.rights()
+        for data in ('', True, [], encoded('accepted')['data']):
+            with self.subTest(data=data):
+                self.env.calls.clear()
+                self.manager.data.clear()
+                preview = self.prepare()
+                self.manager.sms(preview['operation_id'])
+                self.env.final_response = {'retCode': '000000', 'data': data}
+                result = self.confirm(preview['operation_id'], sms_code='123456')
+                self.assertEqual(result['state'], 'accepted')
+                self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456'), result)
+                self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_equity_plain_json_outparam_preserves_second_sms_instructions(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '000000', 'data': {
+            'outParam': base64.b64encode(b'{"twiceSmsVerify":true}').decode()}}
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.assertEqual(result['state'], 'accepted')
+        self.assertIn('回复确认', result['message'])
+
+    def test_equity_flow_replaces_h5_login_type_after_native_initialization(self):
+        self.env.rights()
+        for carrier, expected in ((None, '0'), ('002', '0'), ('001', '3'), ('003', '3')):
+            with self.subTest(carrier=carrier):
+                if carrier is None:
+                    self.env.snapshot['profile'].pop('carrierOperator', None)
+                else:
+                    self.env.snapshot['profile']['carrierOperator'] = carrier
+                self.env.calls.clear()
+                self.storage.data.clear()
+                self.manager.data.clear()
+                preview = self.prepare()
+                self.assertEqual(self.env.calls[0][1]['loginType'], '1')
+                detail = next(call[1] for call in self.env.calls if '/pcardInfoQry/' in call[0])
+                self.assertEqual(detail['loginType'], expected)
+                self.manager.sms(preview['operation_id'])
+                result = self.confirm(preview['operation_id'], sms_code='123456')
+                self.assertEqual(result['state'], 'accepted')
+                self.assertEqual(self.env.final_calls[0][1]['loginType'], expected)
+
     def test_equity_flow_without_sms_and_unknown_submission_does_not_repeat(self):
         self.env.rights()
         self.env.detail['smsCheck'] = '0'
@@ -263,6 +325,139 @@ class CouponUseTests(unittest.TestCase):
         self.assertEqual(result['state'], 'unknown')
         self.assertEqual(self.confirm(preview['operation_id']), result)
         self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_equity_flow_rejection_keeps_official_reason_without_sms_or_coupon_secrets(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '400010',
+            'retMsg': '认证失败 '+PHONE+' 123456 '+self.env.row['pCardNo']}
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.assertEqual((result['state'], result['code']), ('failed', '400010'))
+        self.assertIn('官方说明：认证失败', result['message'])
+        for secret in (PHONE, '123456', self.env.row['pCardNo']):
+            self.assertNotIn(secret, result['message'])
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456'), result)
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_processing_flow_response_checks_same_coupon_and_confirms_success_without_resubmission(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '550023'}
+        self.env.before_final = lambda: self.env.detail.update(couponStatus='10')
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.assertEqual(result['state'], 'accepted')
+        self.assertIn('已确认使用', result['message'])
+        details = [call for call in self.env.calls if '/pcardInfoQry/' in call[0]]
+        self.assertEqual(len(details), 2)
+        self.assertEqual(details[0][1]['pcardPasswd'], details[1][1]['pcardPasswd'])
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456'), result)
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_processing_flow_is_not_success_until_official_status_is_used(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '571001'}
+        self.env.before_final = lambda: self.env.detail.update(couponStatus='9')
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.assertEqual(result['state'], 'unknown')
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456'), result)
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_failed_followup_query_preserves_processing_result_without_resubmission(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '550023'}
+        self.env.before_final = lambda: setattr(self.env, 'detail_response', {'retCode': '500003'})
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.assertEqual(result['state'], 'unknown')
+        self.assertIn('正在处理', result['message'])
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_official_used_history_reconciles_previous_unknown_flow_result(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '550023'}
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456')['state'], 'unknown')
+        self.env.row['couponStatus'] = '10'
+        self.manager.query(LOGIN, state='history')
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.assertEqual(result['state'], 'accepted')
+        self.assertEqual(self.storage.data[self.manager.operations[preview['operation_id']].key]['state'], 'accepted')
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_used_history_of_another_coupon_cannot_confirm_unknown_flow(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response = {'retCode': '550023'}
+        result = self.confirm(preview['operation_id'], sms_code='123456')
+        self.env.row.update(couponStatus='10', pCardNo='another-coupon')
+        self.manager.query(LOGIN, state='history')
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456'), result)
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_wallet_queries_during_sms_reuse_the_existing_native_session(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        wallet = self.env.sessions[0]
+        self.env.snapshot.update(cookie='JSESSIONID=renewed; UID=private_app_uid',credential_revision=2)
+        result = self.manager.query(LOGIN)
+        self.assertEqual(result['items'][0]['id'], self.env.coupon_id)
+        self.assertEqual(len(self.env.sessions), 1)
+        self.assertFalse(wallet.closed)
+        self.assertEqual(sum('/initMessage?' in call[0] for call in self.env.calls), 1)
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456')['state'], 'accepted')
+        self.assertEqual(len(self.env.final_calls), 1)
+
+    def test_officially_expired_pinned_wallet_is_closed_and_list_recovers_without_sms_or_redemption(self):
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        operation = self.manager.operations[preview['operation_id']]
+        operation.client.post = Mock(return_value=Response({'retCode':'500003'}))
+        sms_calls = sum('/pcardsms/' in call[0] for call in self.env.calls)
+        result = self.manager.query(LOGIN)
+        self.assertEqual(result['items'][0]['id'],self.env.coupon_id)
+        self.assertIsNone(operation.context)
+        self.assertEqual(operation.expires,0)
+        self.assertEqual(len(self.env.sessions),2)
+        self.assertEqual(sum('/pcardsms/' in call[0] for call in self.env.calls),sms_calls)
+        self.assertEqual(self.env.final_calls,[])
+        with self.assertRaises(CouponUseError) as caught:self.manager.sms(preview['operation_id'])
+        self.assertEqual(caught.exception.code,'OPERATION_EXPIRED')
+
+    def test_opening_the_same_coupon_in_another_tab_keeps_the_pending_sms_session(self):
+        self.env.rights()
+        preview = self.prepare()
+        self.manager.sms(preview['operation_id'])
+        calls_before = len(self.env.calls)
+        self.assertEqual(self.prepare(), preview)
+        self.assertEqual(len(self.env.sessions), 1)
+        self.assertEqual(len(self.env.calls), calls_before)
+        self.assertEqual(self.confirm(preview['operation_id'], sms_code='123456')['state'], 'accepted')
+
+    def test_completed_wallet_is_not_reused_by_later_queries(self):
+        self.exchange()
+        self.assertTrue(self.env.sessions[0].closed)
+        result = self.manager.query(LOGIN)
+        self.assertEqual(result['items'][0]['id'], self.env.coupon_id)
+        self.assertEqual(len(self.env.sessions), 2)
+        self.assertTrue(self.env.sessions[1].closed)
+
+    def test_query_uses_latest_wallet_after_opening_another_coupon(self):
+        first = self.prepare()
+        self.env.row['pCardNo'] = 'another-coupon'
+        second = self.prepare()
+        self.manager.operations[first['operation_id']].user['province'] = 'old-wallet'
+        self.manager.operations[second['operation_id']].user['province'] = 'current-wallet'
+        self.manager.query(LOGIN)
+        self.assertEqual(self.env.calls[-1][1]['provCode'], 'current-wallet')
+        self.assertEqual(len(self.env.sessions), 2)
 
     def test_equity_flow_agreement_and_missing_sms_context_are_not_submitted(self):
         self.env.rights()
@@ -606,9 +801,8 @@ class CouponUseTests(unittest.TestCase):
         first, second = self.prepare(), self.prepare()
         result = self.confirm(first['operation_id'])
         self.assertEqual(self.confirm(first['operation_id']), result)
-        with self.assertRaises(CouponUseError) as error:
-            self.confirm(second['operation_id'])
-        self.assertEqual(error.exception.code, 'ALREADY_SUBMITTED')
+        self.assertEqual(second['operation_id'], first['operation_id'])
+        self.assertEqual(self.confirm(second['operation_id']), result)
         with self.assertRaises(CouponUseError):
             self.prepare()
         self.assertEqual(len(self.env.final_calls), 1)
@@ -663,13 +857,13 @@ class CouponUseTests(unittest.TestCase):
             self.confirm(preview['operation_id'], sms_code='123456')
         self.assertEqual(self.env.final_calls, [])
 
-    def test_rotated_credentials_expired_preview_or_changed_coupon_stop_before_submission(self):
+    def test_changed_account_expired_preview_or_changed_coupon_stop_before_submission(self):
         preview = self.prepare()
-        self.env.snapshot['credential_revision'] = 2
+        self.env.snapshot['phone'] = '13900000001'
         with self.assertRaises(CouponError) as error:
             self.manager.sms(preview['operation_id'])
         self.assertEqual(error.exception.code, 'APP_CREDENTIALS_CHANGED')
-        self.env.snapshot['credential_revision'] = 1
+        self.env.snapshot['phone'] = PHONE
         self.manager.operations[preview['operation_id']].expires = 0
         with self.assertRaises(CouponUseError) as error:
             self.manager.sms(preview['operation_id'])
@@ -694,6 +888,16 @@ class CouponUseTests(unittest.TestCase):
         self.assertEqual(check[1], {'phoneNo': PHONE, 'busiType': 'hf01', 'pcardNo': self.env.row['pCardNo'], 'channel': '11'})
         self.assertIn('inParam', check[2])
         self.assertEqual(self.env.final_calls, [])
+
+    def test_new_order_persists_its_payment_deadline_without_extending_on_reopen(self):
+        self.env.recharge()
+        preview = self.prepare()
+        self.assertEqual(self.confirm(preview['operation_id'],charge_amount='30')['state'],'payment_required')
+        row, = self.storage.data.values()
+        self.assertEqual(row['payment_expires_at']-row['created_at'],PAYMENT_WINDOW_SECONDS)
+        before = row['payment_expires_at']
+        self.assertEqual(self.prepare()['state'],'payment_required')
+        self.assertEqual(self.manager.pending(LOGIN)[0]['expires_at'],before)
 
     def test_recharge_order_uses_signed_30_paid_36_credit_and_returns_manual_payment(self):
         self.env.recharge()

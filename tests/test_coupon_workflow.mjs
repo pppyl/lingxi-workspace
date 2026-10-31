@@ -25,17 +25,21 @@ async function fixture(mode,options={}) {
   };
   get('coupons-use-verification').append(new Element('p'));
   get('coupons-category').value='all';
-  const pending=mode==='payment'?[{order_id:'existing-order',coupon_name:'fixture',amount:'30'}]:[];
+  const pending=options.pendingOrders||(mode==='payment'?[{order_id:'existing-order',coupon_name:'fixture',amount:'30'}]:[]);
   const card={id:'coupon',name:'fixture',use_kind:['exchange','rights'].includes(mode)?mode:'recharge',category:mode==='rights'?'flow':'fee',status:'available'};
   let loggedIn=false,loginAttempts=0,prepareCount=0,accepted=false;
   const http=async(url,fetchOptions)=>{
     const body=fetchOptions?.body?JSON.parse(fetchOptions.body):undefined;calls.push({url,body});
     let result,status=200;
     if(url==='/api/coupons/accounts')result={accounts:options.accounts||[{id:'account',status:'active',name:'fixture',phone_masked:'138****0000'}]};
-    else if(url.startsWith('/api/coupons/pending?'))result={pending_orders:pending};
+    else if(url.startsWith('/api/coupons/pending?')){
+      if(options.failPendingRead&&calls.filter(c=>c.url.startsWith('/api/coupons/pending?')).length>1)throw new Error('network unavailable');
+      result={pending_orders:pending};
+    }
     else if(url.startsWith('/api/coupons?')){
       const accountId=new URLSearchParams(url.split('?')[1]).get('login_id');
-      if(options.countFailureIds?.includes(accountId)){status=401;result={code:'APP_LOGIN_REQUIRED',error:'账号需要重新登录'};}
+      if(options.queryFailures?.length){status=409;result={code:options.queryFailures.shift(),error:'共享账号凭据已更新，请重新查询卡券。'};}
+      else if(options.countFailureIds?.includes(accountId)){status=401;result={code:'APP_LOGIN_REQUIRED',error:'账号需要重新登录'};}
       else{
         const rows=accepted&&options.consumeOnAccepted?[]:options.itemsByAccount?.[accountId]||[card];
         result={items:rows,page:1,total:rows.length,has_more:false,pending_orders:pending};
@@ -52,21 +56,27 @@ async function fixture(mode,options={}) {
       else result={operation_id:++prepareCount===1?'operation':'operation-'+prepareCount,kind:card.use_kind,choices:[{value:'30',label:'充值30元'}]};
     }
     else if(url==='/api/coupons/use/confirm'||url==='/api/coupons/use/payment') {
-      if(options.failedResultCode&&(!loggedIn||options.repeatError)){
+      if(options.closedPayment&&url==='/api/coupons/use/payment')result={state:'closed',message:'订单付款窗口已结束'};
+      else if(options.failedResultCode&&(!loggedIn||options.repeatError)){
         result={state:'failed',code:options.failedResultCode,message:'官方检测到充值环境异常，本次未生成支付订单。'};
       }else if(options.errorCode&&(!loggedIn||options.repeatError)){
         status=409;result={code:options.errorCode,error:'需要验证'};
       }else if(['exchange','rights'].includes(mode))result=body.prepare_risk?{state:'risk_required',sdk_server:'/coupon-verification/wallet/udid/c1?operation_id=operation'}:{state:'accepted',message:'兑换申请已受理'};
-      else result=(loggedIn||body.captcha_token||(url==='/api/coupons/use/payment'&&mode==='submission'))?{state:'payment_required',order_id:'existing-order',amount:'30.00',payment_url:'https://mclient.alipay.com/cashierRoutePay.htm?fixture',qr_image:'fixture-qr'}:
+      else result=(options.readyPayment||loggedIn||body.captcha_token||(url==='/api/coupons/use/payment'&&mode==='submission'))?{state:'payment_required',order_id:'existing-order',amount:'30.00',payment_url:'https://mclient.alipay.com/cashierRoutePay.htm?fixture',qr_image:'fixture-qr'}:
         {state:'verification_required',verification:'captcha',message:'请人工验证',challenge:{app_id:'provider-app',risk_id:'provider-risk'}};
     } else throw new Error('Unexpected API '+url);
+    if(options.beforeResponse)await options.beforeResponse({url,events,calls});
     if(result.state==='accepted')accepted=true;
-    return {ok:status===200,status,json:async()=>result};
+    if(options.paymentHtmlFailure&&url==='/api/coupons/use/payment')return {
+      ok:false,status:500,headers:{get:()=> 'text/html; charset=utf-8'},
+      json:async()=>{throw new Error('Unexpected token <');},
+    };
+    return {ok:status===200,status,headers:{get:()=> 'application/json'},json:async()=>result};
   };
   vm.runInNewContext(fs.readFileSync(new URL('../static/coupons.js',import.meta.url),'utf8'),{
     document:{cookie:'session=private; _zw_kvani5r=real-sdk-lid',getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],head:{append(script){script.onload();}}},
     window:{addEventListener:(name,fn)=>{events[name]=fn;},publishAccountsChanged:()=>events['accounts-changed'](),
-      _zw:{ConstID(config,done){calls.push({url:'official-sdk',body:config});done(options.sdkError||null,options.sdkError?'':'real-sdk-token');}}},fetch:http,location:{origin:'http://localhost:5500'},Intl,URLSearchParams,Date,
+      _zw:{ConstID(config,done){calls.push({url:'official-sdk',body:config});done(options.sdkError||null,options.sdkError?'':'real-sdk-token');}}},fetch:http,location:{origin:'http://localhost:5500'},Intl,URLSearchParams,Date:class extends Date{static now(){return options.now??Date.now();}},
     clearInterval(){},setInterval(){return 1;},clearTimeout(id){timers.delete(id);},
     setTimeout(callback,delay){const id=Symbol();timers.set(id,{callback,delay});return id;},
   });
@@ -81,6 +91,51 @@ async function fixture(mode,options={}) {
   }
   return {get,calls,events,submission,timers};
 }
+
+test('HTML payment error preserves the bound order and never creates another order or sends login SMS',async()=>{
+  const options={paymentHtmlFailure:true};
+  const {get,calls}=await fixture('payment',options);
+  assert.match(get('coupons-use-error').textContent,/本机服务.*HTTP 500/);
+  assert.doesNotMatch(get('coupons-use-error').textContent,/Unexpected token|doctype/);
+  assert.equal(get('coupons-use-message').textContent,'订单已保留，获取链接不会重新下单。');
+  assert.equal(get('coupons-payment-panel').hidden,true);
+  assert.equal(get('coupons-use').open,true);
+  options.paymentHtmlFailure=false;
+  await get('coupons-use-get-payment').click();
+  const requests=calls.filter(c=>c.url==='/api/coupons/use/payment');
+  assert.equal(requests.length,2);
+  assert.ok(requests.every(c=>c.body.order_id==='existing-order'));
+  assert.equal(calls.filter(c=>c.url==='/api/coupons/use/confirm').length,0);
+  assert.equal(calls.filter(c=>c.url==='/api/logins/relogin/sms').length,0);
+});
+
+test('a confirmed closed order disappears immediately and clears old payment links',async()=>{
+  const {get,calls}=await fixture('payment',{closedPayment:true});
+  assert.equal(get('coupons-pending').hidden,true);
+  assert.equal(get('coupons-pending-list').children.length,0);
+  assert.equal(get('coupons-payment-url').value,'');
+  assert.equal(get('coupons-payment-panel').hidden,true);
+  assert.equal(get('coupons-use-get-payment').hidden,true);
+  assert.equal(calls.some(c=>c.url==='/api/coupons/use/confirm'||c.url.startsWith('/api/logins/')),false);
+});
+
+for(const networkFailure of [false,true])test(`payment window expiry removes rows and links without a retry loop (pending query failure: ${networkFailure})`,async()=>{
+  const orders=[{order_id:'existing-order',coupon_name:'fixture',amount:'30',expires_in:1}];
+  const options={now:Date.now(),readyPayment:true,pendingOrders:orders,failPendingRead:networkFailure};
+  const {get,calls,timers}=await fixture('payment',options);
+  assert.equal(get('coupons-pending').hidden,false);
+  assert.equal(get('coupons-payment-panel').hidden,false);
+  const [timerId,timer]=[...timers].find(([,value])=>value.delay===1000);
+  options.now+=1000;orders.length=0;timers.delete(timerId);await timer.callback();
+  assert.equal(get('coupons-pending').hidden,true);
+  assert.equal(get('coupons-pending-list').children.length,0);
+  assert.equal(get('coupons-use').open,false);
+  assert.equal(get('coupons-payment-url').value,'');
+  assert.equal(get('coupons-payment-panel').hidden,true);
+  assert.equal(timers.size,0);
+  assert.equal(calls.filter(c=>c.url.startsWith('/api/coupons/pending?')).length,2);
+  assert.equal(calls.some(c=>c.url==='/api/coupons/use/confirm'||c.url.startsWith('/api/logins/')),false);
+});
 
 for(const mode of ['payment','submission'])test(`human verification automatically resumes ${mode} exactly once`,async()=>{
   const env=await fixture(mode),frame=env.get('coupons-use-captcha').querySelector('iframe');
@@ -254,6 +309,32 @@ test('background count failure shows unknown rather than zero and never sends a 
   assert.match(bad,/未获取/);assert.doesNotMatch(bad,/可用 0 张/);
   assert.equal(calls.some(call=>call.url.startsWith('/api/logins/')),false);
   assert.equal(get('coupons-use').open,false);
+});
+
+test('clicking the selected account retries its failed list immediately without sending login SMS',async()=>{
+  const {get,calls}=await fixture('counts',{onlyCounts:true,queryFailures:['APP_CREDENTIALS_CHANGED']});
+  assert.match(get('coupons-feedback').textContent,/凭据已更新/);
+  await get('coupons-accounts').children[0].click();
+  assert.equal(get('coupons-feedback').hidden,true);
+  assert.equal(calls.filter(c=>c.url.startsWith('/api/coupons?')).length,2);
+  assert.equal(calls.some(c=>c.url.startsWith('/api/logins/')),false);
+  assert.match(renderedText(get('coupons-accounts')),/可用 1 张/);
+});
+
+test('login notifications during a failed in-flight refresh coalesce into one immediate fresh query',async()=>{
+  let notified=false;
+  const {get,calls}=await fixture('counts',{onlyCounts:true,queryFailures:['APP_CREDENTIALS_CHANGED'],
+    beforeResponse:({url,events})=>{
+      if(url.startsWith('/api/coupons?')&&!notified){
+        notified=true;
+        events['accounts-changed']();events['accounts-changed']();events['accounts-changed']();
+      }
+    }});
+  assert.equal(calls.filter(c=>c.url==='/api/coupons/accounts').length,2);
+  assert.equal(calls.filter(c=>c.url.startsWith('/api/coupons?')).length,2);
+  assert.equal(get('coupons-feedback').hidden,true);
+  assert.match(renderedText(get('coupons-accounts')),/可用 1 张/);
+  assert.equal(calls.some(c=>c.url.startsWith('/api/logins/')),false);
 });
 
 test('refresh updates other account counts and accepted exchange refreshes selected count',async()=>{

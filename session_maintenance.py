@@ -1,6 +1,7 @@
 """Maintain the APP session and restore businesses, without sending an SMS."""
 import threading
 import time
+import hashlib
 
 
 class SessionMaintenance:
@@ -19,8 +20,8 @@ class SessionMaintenance:
         for saved in records:
             if self.stopping.is_set():
                 return
-            revision = saved.credential_revision
-            changed = self.revisions.get(saved.id) != revision
+            identity = hashlib.sha256(saved.cookie.encode()).digest()
+            changed = self.revisions.get(saved.id) != identity
             if saved.status == 'login_required' or not changed and self.now() < self.due.get(saved.id, 0):
                 continue
             try:
@@ -29,7 +30,7 @@ class SessionMaintenance:
                 # A failing account cannot terminate recovery for other accounts.
                 ok = False
             self.due[saved.id] = self.now() + (self.interval if ok else self.retry_after)
-            self.revisions[saved.id] = saved.credential_revision
+            self.revisions[saved.id] = hashlib.sha256(saved.cookie.encode()).digest()
         current_ids = {saved.id for saved in records}
         self.due = {key:value for key,value in self.due.items() if key in current_ids}
         self.revisions = {key:value for key,value in self.revisions.items() if key in current_ids}

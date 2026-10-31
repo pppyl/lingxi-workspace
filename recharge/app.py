@@ -5,15 +5,16 @@ import secrets
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 
 from .cmcc import ActivityError, ENTRY, ROOT
 from .accounts import AccountManager
 from .scheduler import ClaimScheduler
+from network_access import allowed_lan_host
 
 
 def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=None, app_logout_provider=None,
-               app_accounts_provider=None, app_credentials_provider=None):
+               app_accounts_provider=None, app_credentials_provider=None, app_prepare_provider=None,credential_cache=None):
     app = Flask(__name__)
     app.config.update(SECRET_KEY=secrets.token_hex(32), MAX_CONTENT_LENGTH=48 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict')
@@ -22,12 +23,35 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
     app.extensions.update(activity=manager.get().client, accounts=manager, scheduler=scheduler)
 
     def bind_credentials(account, login_id):
+        account.client.credential_cache = credential_cache
         if app_credentials_provider is not None:
             account.client.app_credentials_provider = lambda: app_credentials_provider(login_id)
 
     for linked in list(manager.accounts.values()):
         if linked.pool_login_id:
             bind_credentials(linked,linked.pool_login_id)
+
+    def ensure_shared_account(item):
+        with manager.lock:
+            target = next((a for a in manager.accounts.values() if a.pool_login_id == item['id']), None)
+            if target is None:
+                target = next((a for a in manager.accounts.values() if not a.pool_login_id
+                    and a.client.mode == 'none' and not scheduler.jobs.get(a.id, {}).get('enabled')), None)
+                if target is None:
+                    target = manager.add(item.get('name') or item['phone_masked'])
+                target.pool_login_id = item['id']
+                target.name = item.get('name') or item['phone_masked']
+                target.cached.update(phone=item['phone_masked'], session_status='restoring')
+                bind_credentials(target, item['id'])
+                manager.save()
+            name = item.get('name') or item['phone_masked']
+            if target.name != name:
+                target.name = name
+                manager.save()
+            return target
+
+    if app_accounts_provider is not None:
+        scheduler.configure_automatic(app_accounts_provider, ensure_shared_account, app_prepare_provider)
 
     def account_for_request():
         data = request.get_json(silent=True) or {}
@@ -62,11 +86,15 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
 
     @app.before_request
     def local_access():
-        if request.host.split(':')[0] not in {'127.0.0.1', 'localhost'}:
-            return jsonify(error='仅限本机访问', code='LOCAL_ONLY'), 403
+        if not allowed_lan_host(request.host):
+            return jsonify(error='仅支持本机或局域网 IP 访问。', code='LOCAL_ONLY'), 403
         origin = request.headers.get('Origin')
         if origin and urlsplit(origin).netloc != request.host:
             return jsonify(error='请求来源无效', code='ORIGIN_REJECTED'), 403
+        if app_accounts_provider is not None and request.path == '/static/tasks.html':
+            from urllib.parse import urlencode
+            query = {'tab':'tasks', **{key:request.args[key] for key in ('detail','edit') if key in request.args}}
+            return redirect(url_for('index')+'?'+urlencode(query))
         if request.path.startswith('/api/') and request.method == 'POST':
             expected = session.get('csrf', '')
             provided = request.headers.get('X-CSRF-Token', '')
@@ -94,7 +122,7 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
     @app.get('/')
     def index():
         session.setdefault('csrf', secrets.token_urlsafe(32))
-        with app.open_resource('static/activity.html', mode='r', encoding='utf-8') as source:
+        with app.open_resource('static/workspace.html' if app_accounts_provider is not None else 'static/activity.html', mode='r', encoding='utf-8') as source:
             markup = source.read()
         return render_template('index.html', csrf=session['csrf'], entry=ENTRY,
                                unified_login=app_login_provider is not None, activity_markup=markup)
@@ -109,9 +137,18 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
 
     @app.get('/api/accounts')
     def accounts():
-        return jsonify(accounts=manager.snapshots(), jobs=scheduler.snapshots(),
+        scheduler.sync_automatic()
+        directory = manager.snapshots()
+        shared = app_accounts_provider() if app_accounts_provider else []
+        by_id = {a['id']:a for a in shared}
+        for account in directory:
+            item = by_id.get(account['login_id'])
+            if item is not None and item['status'] != 'active':
+                account.update(authenticated=False, session_status='login_required')
+        return jsonify(accounts=directory, jobs=scheduler.snapshots(), logins=shared,
                        warning=manager.load_error or scheduler.load_error,
-                       timezone='Asia/Shanghai')
+                       timezone='Asia/Shanghai', automatic=app_accounts_provider is not None,
+                       prepare_time='07:55', run_time='08:00', server_time=scheduler.now().isoformat())
 
     @app.get('/api/logins')
     def shared_logins():
@@ -157,7 +194,7 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
                 material = app_login_provider(login_id)
                 if not material:
                     raise ActivityError('共享账号已退出或需要验证', 'APP_LOGIN_REQUIRED',401)
-                if target.client.app_material and target.client.app_material.get('cookie') == material['cookie']:
+                if target.client.mode == 'app' and target.client.app_material and target.client.app_material.get('phone') == material['phone']:
                     state = target.client.identity()
                 else:
                     state = target.client.connect_app(**material)
@@ -320,6 +357,8 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
     @app.post('/api/schedules')
     def schedules():
         data = request.get_json()
+        if app_accounts_provider is not None:
+            raise ActivityError('所有有效账号已自动参加，每周三 07:55 准备、08:00 领取，无需手动预约。', 'AUTOMATIC_SCHEDULE', 409)
         ids = account_ids(data)
         jobs = scheduler.schedule(ids, data, immediate=data.get('immediate') is True)
         return jsonify(jobs=jobs, message='已为选中账号启动任务' if data.get('immediate') else '定时任务已保存')

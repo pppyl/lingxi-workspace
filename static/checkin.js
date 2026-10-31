@@ -93,7 +93,7 @@ function render(){
     if(stoppable(task)){const stop=node('button','quiet','停止');stop.type='button';stop.disabled=working;stop.addEventListener('click',()=>stopTasks([task.id]));actions.append(stop);}
     operations.append(actions);row.append(selection,account,kind,time,state,result,operations);return row;
   });
-  if(!rows.length){const row=node('tr'),cell=node('td','checkin-empty',model.tasks.length?'当前筛选下没有任务。':'还没有自动任务，点击“配置自动任务”设置执行账号。');cell.colSpan=7;row.append(cell);rows.push(row);}
+  if(!rows.length){const row=node('tr'),cell=node('td','checkin-empty',model.tasks.length?'当前筛选下没有任务。':'有效账号会自动启用每日任务，可在“配置自动任务”中统一设置时间。');cell.colSpan=7;row.append(cell);rows.push(row);}
   $('checkin-tasks').replaceChildren(...rows);updateSelection();
   if($('checkin-history').open)renderHistory();
 }
@@ -121,14 +121,15 @@ function updateConfiguration(){
   $('checkin-signin-fields').hidden=!$('checkin-signin-enabled').checked;
   $('checkin-flash-fields').hidden=!$('checkin-flash-enabled').checked;
   const product=model.products.find(item=>item.id===$('checkin-product').value);
-  $('checkin-product-description').textContent=product?productLabel(product)+(product.available===false?'。当前未开放，按预约时间再检查官方状态。':''):'选择商品后显示其消耗和参与条件。';
+  $('checkin-product-description').textContent=product?productLabel(product)+(product.available===false?'。当前未开放，按预约时间再检查官方状态。':''):$('checkin-product').value===model.automation.product_id?'执行时自动核对官方当日参与资格。':'选择商品后显示其消耗和参与条件。';
 }
 async function openEditor(asManual=false,loginId=''){
   if(working||!await refresh())return;
   manual=asManual;$('checkin-form').reset();$('checkin-form-error').hidden=true;
   $('checkin-burst-workers').value=model.settings?.burst_workers??8;
   $('checkin-editor-title').textContent=manual?'立即签到':'配置自动任务';
-  $('checkin-editor-description').textContent=manual?'使用所选共享账号执行免费签到，每个账号今天最多一次。':'共享账号只需登录一次，选择后统一设置。';
+  $('checkin-editor-description').textContent=manual?'使用所选共享账号执行免费签到，每个账号今天最多一次。':'应用于所有有效账号，新增或恢复登录后自动纳入，无需选择账号。';
+  $('checkin-account-heading').hidden=!manual;$('checkin-account-options').hidden=!manual;
   $('checkin-automatic-options').hidden=manual;$('checkin-save').textContent=manual?'开始签到':'保存自动任务';
   const options=model.accounts.map(account=>{
     const label=node('label','checkin-account-option'),check=node('input');check.type='checkbox';check.value=account.id;
@@ -143,13 +144,14 @@ async function openEditor(asManual=false,loginId=''){
   for(const product of model.products){const option=node('option','',`${product.name} · ${productLabel(product)}${product.available===false?'（当前未开放）':''}`);option.value=product.id;option.disabled=product.selectable!==true;products.push(option);}
   $('checkin-product').replaceChildren(...products);
   const flashReady=model.products.some(product=>product.selectable===true);
-  $('checkin-flash-enabled').disabled=!flashReady;$('checkin-flash-unavailable').hidden=flashReady;
-  if(loginId&&!manual){
-    const jobs=model.tasks.filter(task=>task.login_id===loginId),sign=jobs.find(task=>task.kind==='signin'),flash=jobs.find(task=>task.kind==='flash');
-    $('checkin-signin-enabled').checked=!!sign?.enabled;$('checkin-flash-enabled').checked=!!flash?.enabled&&flashReady;
-    if(sign?.next_run_at)$('checkin-signin-time').value=new Date(sign.next_run_at).toLocaleTimeString('en-GB',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
-    if(flash?.product_id)$('checkin-product').value=flash.product_id;
-    if(flash)for(const key of ['count','interval','workers'])$('checkin-burst-'+key).value=flash['burst_'+key]??({count:40,interval:0.05,workers:8}[key]);
+  const config=model.automation;
+  if(!flashReady&&config?.product_id){const option=node('option','','月末2元话费券 · 执行时核对官方资格');option.value=config.product_id;$('checkin-product').append(option);}
+  $('checkin-flash-enabled').disabled=!flashReady&&!config?.product_id;$('checkin-flash-unavailable').hidden=flashReady||!!config?.product_id;
+  if(!manual){
+    $('checkin-signin-enabled').checked=config.signin_enabled;$('checkin-flash-enabled').checked=config.flash_enabled;
+    $('checkin-signin-time').value=config.signin_time;
+    $('checkin-product').value=config.product_id;
+    for(const key of ['count','interval','workers'])$('checkin-burst-'+key).value=config['burst_'+key];
   }
   updateAccountSelection();updateConfiguration();$('checkin-editor').showModal();
 }
@@ -221,12 +223,12 @@ $('checkin-form').addEventListener('submit',async event=>{
   event.preventDefault();if(working)return;
   try{
     const loginIds=[...$('checkin-account-options').querySelectorAll('input:checked')].map(input=>input.value);
-    if(!loginIds.length)throw new Error('请选择至少一个可用账号。');
+    if(manual&&!loginIds.length)throw new Error('请选择至少一个可用账号。');
     const signin=$('checkin-signin-enabled').checked,flash=$('checkin-flash-enabled').checked,productId=$('checkin-product').value;
     if(!manual&&!signin&&!flash)throw new Error('请至少启用一项自动任务。');
-    if(!manual&&flash&&!model.products.some(product=>product.id===productId&&product.selectable===true))throw new Error('请选择已确认可参与的秒杀商品。');
+    if(!manual&&flash&&productId!==model.automation.product_id)throw new Error('请选择已确认可参与的秒杀商品。');
     working=true;$('checkin-save').disabled=true;$('checkin-form-error').hidden=true;
-    const result=await api(manual?'/api/checkin/run':'/api/checkin/tasks/save',manual?{login_ids:loginIds,kind:'signin'}:{login_ids:loginIds,signin_enabled:signin,signin_time:$('checkin-signin-time').value,flash_enabled:flash,product_id:productId,burst_count:Number($('checkin-burst-count').value),burst_interval:Number($('checkin-burst-interval').value),burst_workers:Number($('checkin-burst-workers').value)});
+    const result=await api(manual?'/api/checkin/run':'/api/checkin/tasks/save',manual?{login_ids:loginIds,kind:'signin'}:{signin_enabled:signin,signin_time:$('checkin-signin-time').value,flash_enabled:flash,product_id:productId,burst_count:Number($('checkin-burst-count').value),burst_interval:Number($('checkin-burst-interval').value),burst_workers:Number($('checkin-burst-workers').value)});
     $('checkin-editor').close();feedback(result.message||(manual?'签到请求已完成，请查看各账号执行记录。':'自动任务已保存。'),true);await refresh();
   }catch(error){$('checkin-form-error').textContent=error.message;$('checkin-form-error').hidden=false;}
   finally{working=false;$('checkin-save').disabled=false;render();}

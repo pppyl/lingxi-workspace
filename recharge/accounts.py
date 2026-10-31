@@ -30,7 +30,9 @@ class Account:
         return {'id': self.id, 'name': self.name, 'mode': self.client.mode,
                 'authenticated': self.cached.get('authenticated', False),
                 'phone': self.cached.get('phone', ''), 'error': self.error,
-                'session_status': self.cached.get('session_status', ''), 'login_id': self.pool_login_id}
+                'session_status': self.cached.get('session_status', ''), 'login_id': self.pool_login_id,
+                'activity': {key:self.cached[key] for key in ('can_claim','rd_status','state_label','reason',
+                    'start_hour','server_time','next_start','prize') if key in self.cached}}
 
 
 class AccountManager:

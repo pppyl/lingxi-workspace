@@ -84,6 +84,7 @@ class MonthlyCouponAuthenticationTests(unittest.TestCase):
     def test_rotation_during_token_request_prevents_provincial_login(self):
         def rotate(*args):
             self.current['credential_revision'] += 1
+            self.current['cookie'] = 'JSESSIONID=new-login'
             return 200, {'retCode': '000000', 'rspBody': {'token': 'app-token'}}, {}
         self.flow.call.side_effect = rotate
         with self.assertRaises(MonthlyCouponAuthError) as raised:
@@ -91,6 +92,17 @@ class MonthlyCouponAuthenticationTests(unittest.TestCase):
                 pass
         self.assertEqual(raised.exception.code, 'APP_CREDENTIALS_CHANGED')
         self.assertFalse(self.session.calls)
+        self.assertTrue(self.session.closed)
+
+    def test_maintenance_metadata_refresh_does_not_abort_unchanged_app_session(self):
+        def maintain(*args):
+            self.current['credential_revision'] += 1
+            self.current['app_context']['refreshed_at'] = 1
+            return 200, {'retCode':'000000','rspBody':{'token':'app-token'}}, {}
+        self.flow.call.side_effect = maintain
+        with self.context():
+            pass
+        self.assertEqual(len(self.session.calls),1)
         self.assertTrue(self.session.closed)
 
     def test_wrong_account_is_rejected_without_exposing_token(self):

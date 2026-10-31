@@ -125,6 +125,15 @@ class ClaimTests(unittest.TestCase):
     def test_phone_is_masked(self):
         self.assertEqual(self.activity.identity()['phone'], '138****8000')
 
+    def test_manual_queries_reuse_existing_device_identity(self):
+        self.activity.mode = 'app'
+        self.activity.ensure_browser = Mock()
+        self.activity.bridge.rpc = Mock(return_value={'const_id':'device-must-not-be-refetched'})
+        self.activity.refresh();self.activity.refresh()
+        self.activity.ensure_browser.assert_not_called()
+        self.activity.bridge.rpc.assert_not_called()
+        self.assertEqual(self.activity.const_id,'official-device-id')
+
     def test_automatic_timeout_checks_result_before_another_post(self):
         original = self.activity.call.side_effect
 

@@ -1,0 +1,7 @@
+{
+  "id": "seven-day",
+  "title": "7日打卡分百万",
+  "home": "/seven-day",
+  "module": "activities.seven_day.plugin",
+  "temporary": true
+}

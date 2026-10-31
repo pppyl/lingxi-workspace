@@ -77,6 +77,105 @@ class CheckinSchedulerTests(unittest.TestCase):
         self.scheduler.save({'login_ids': ['a'], 'signin_enabled': True, 'signin_time': '08:00',
                              'flash_enabled': True, 'product_id': FLASH_PRODUCT})
 
+    def test_global_configuration_needs_no_accounts_and_covers_later_logins(self):
+        self.scheduler.save({'signin_enabled': True, 'signin_time': '06:30',
+            'flash_enabled': True, 'product_id': FLASH_PRODUCT, 'burst_workers': 16})
+        self.accounts.append({'id': 'c', 'status': 'active'})
+        self.scheduler = self.create()
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a', 'c'])
+        self.assertTrue(all(t['enabled'] for t in self.scheduler.data['tasks'].values()))
+        self.assertEqual({t['clock'] for t in self.scheduler.data['tasks'].values() if t['kind'] == 'signin'}, {'06:30'})
+        self.assertEqual({t['burst_workers'] for t in self.scheduler.data['tasks'].values() if t['kind'] == 'flash'}, {16})
+
+    def test_new_account_default_concurrency_follows_global_setting_not_legacy_override(self):
+        self.configure()
+        flash = next(t for t in self.scheduler.data['tasks'].values() if t['kind'] == 'flash')
+        flash['burst_workers'] = 10
+        self.scheduler._commit(self.scheduler.data)
+        self.accounts[1]['status'] = 'active'
+        self.scheduler = self.create()
+        status = self.scheduler.status()
+        new_flash = next(t for t in status['tasks'] if t['login_id'] == 'b' and t['kind'] == 'flash')
+        self.assertEqual(new_flash['burst_workers'], status['settings']['burst_workers'])
+        self.assertEqual(status['automation']['burst_workers'], status['settings']['burst_workers'])
+
+    def test_late_login_after_clock_automatically_runs_without_new_configuration(self):
+        self.scheduler.tick()
+        self.time = self.time.replace(hour=9)
+        self.accounts[1].update(status='active', credential_revision=2)
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a', 'b'])
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a', 'b'])
+
+    def test_relogin_retries_known_signin_rejection_after_next_run_moved_to_tomorrow(self):
+        self.accounts[0]['credential_revision'] = 1
+        self.time = self.time.replace(hour=9)
+        self.failure = CheckinError('GWT_LIMITED', 'GWT_LIMITED')
+        self.scheduler.tick()
+        self.executor.drain()
+        self.scheduler.tick()
+        self.assertFalse(self.executor.jobs)
+        self.accounts[0]['status'] = 'login_required'
+        self.scheduler.tick()
+        self.accounts[0].update(status='active', credential_revision=2)
+        self.failure = None
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a', 'a'])
+        task = next(t for t in self.scheduler.status()['tasks'] if t['login_id'] == 'a' and t['kind'] == 'signin')
+        self.assertEqual(task['state'], 'already_signed')
+
+    def test_temporary_definite_failure_retries_after_five_minutes_without_relogin(self):
+        self.time = self.time.replace(hour=9)
+        self.failure = CheckinError('GWT_LIMITED', 'GWT_LIMITED')
+        self.scheduler.tick()
+        self.executor.drain()
+        failed = next(t for t in self.scheduler.data['tasks'].values() if t['kind'] == 'signin')
+        self.assertEqual(datetime.fromisoformat(failed['next_run_at']), self.time+timedelta(minutes=5))
+        self.time += timedelta(minutes=5)
+        self.failure = None
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a', 'a'])
+
+    def test_relogin_after_uncertain_submission_only_queries_and_does_not_resubmit(self):
+        self.time = self.time.replace(hour=9)
+        self.failure = CheckinError('request timeout', uncertain=True)
+        self.scheduler.tick()
+        self.executor.drain()
+        self.accounts[0]['credential_revision'] = 2
+        self.failure = None
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a'])
+
+    def test_credentials_changed_during_failed_job_are_reconciled_without_waiting(self):
+        self.time = self.time.replace(hour=9)
+        self.accounts[0]['credential_revision'] = 1
+        self.failure = CheckinError('GWT_LIMITED', 'GWT_LIMITED')
+        self.scheduler.tick()
+        self.accounts[0]['credential_revision'] = 2
+        self.scheduler.tick()
+        self.executor.drain()
+        self.failure = None
+        self.scheduler.tick()
+        self.executor.drain()
+        self.assertEqual(self.calls, ['a', 'a'])
+
+    def test_task_view_uses_official_today_signin_even_if_schedule_was_reset(self):
+        self.configure()
+        self.scheduler.data['observations']['a'] = {'date': self.time.strftime('%Y%m%d'),
+            'today_state': 'signed', 'query_message': 'old credentials changed'}
+        status = self.scheduler.status()
+        task = next(t for t in status['tasks'] if t['login_id'] == 'a' and t['kind'] == 'signin')
+        self.assertEqual(task['state'], 'already_signed')
+        self.assertEqual(status['accounts'][0]['signin_message'], '今日已签到')
+
     def test_daily_clock_and_no_early_or_duplicate_dispatch(self):
         self.configure()
         self.scheduler.tick()
@@ -263,10 +362,11 @@ class CheckinSchedulerTests(unittest.TestCase):
         self.assertEqual(flash['state'], 'skipped')
         self.assertIn('2026-10-30T12:00', flash['next_run_at'])
 
-    def test_status_lists_unconfigured_and_expired_without_fabricated_zero(self):
+    def test_status_enrolls_active_accounts_and_lists_expired_without_fabricated_zero(self):
         status = self.scheduler.status()
         self.assertEqual(len(status['accounts']), 2)
-        self.assertEqual(status['tasks'], [])
+        self.assertEqual({(t['login_id'], t['kind'], t['enabled']) for t in status['tasks']},
+                         {('a', 'signin', True), ('a', 'flash', True)})
         self.assertIsNone(status['accounts'][0]['month_count'])
         self.assertEqual(status['accounts'][0]['today_state'], 'unknown')
         self.assertEqual(len(self.executor.jobs), 1)

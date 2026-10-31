@@ -7,11 +7,11 @@
   <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/monthly_coupon.js" defer></script>
 </head>
 <body class="workspace-app" data-workspace="monthly-coupon"><main class="portal-shell monthly-shell">
-  <section class="monthly-heading"><div><h1>每月话费券</h1><p>每月直接领一次，完成浏览和三天打卡后再领一张。</p></div><div class="monthly-heading-actions"><span id="monthly-month" class="monthly-month"></span><button id="monthly-refresh" class="secondary" type="button">刷新</button></div></section>
+  <section class="monthly-heading"><div><h1>每月话费券</h1><p>所有有效账号默认开启每日检查，每月领取话费券并完成每日打卡。</p></div><div class="monthly-heading-actions"><span id="monthly-month" class="monthly-month"></span><button id="monthly-page-configure" class="secondary" type="button" disabled>活动地址</button><button id="monthly-refresh" class="secondary" type="button">刷新</button><button id="monthly-configure" class="primary" type="button" disabled>自动设置</button></div></section>
   <p id="monthly-warning" class="monthly-notice" role="status" hidden></p><p id="monthly-feedback" class="monthly-feedback" role="status" hidden></p>
   <section class="monthly-panel" aria-label="各账号每月话费券情况">
     <div class="monthly-toolbar"><div class="monthly-toolbar-title"><h2>账号领取情况 <span id="monthly-total">—</span></h2><span id="monthly-summary">正在读取…</span></div><div class="monthly-filters"><select id="monthly-filter" aria-label="筛选每月领取状态"><option value="all">全部账号</option><option value="pending">待领取或做任务</option><option value="completed">两项均已领取</option><option value="automatic">已开启自动</option><option value="attention">需要处理</option><option value="ineligible">不符合活动条件</option></select><input id="monthly-search" type="search" placeholder="搜索账号或号码尾号" aria-label="搜索每月话费券账号" autocomplete="off"></div></div>
-    <div class="monthly-selection"><label><input id="monthly-select-all" type="checkbox" disabled>全选当前可用账号</label><div class="monthly-batch-actions"><span id="monthly-selected-count">已选 0 个</span><button id="monthly-clear-selection" class="quiet" type="button" hidden>取消选择</button><button id="monthly-configure-selected" class="secondary" type="button" disabled>自动设置</button><button id="monthly-run-selected" class="primary" type="button" disabled>执行所选</button></div></div>
+    <div class="monthly-selection"><label><input id="monthly-select-all" type="checkbox" disabled>全选当前可用账号</label><div class="monthly-batch-actions"><span id="monthly-selected-count">已选 0 个</span><button id="monthly-clear-selection" class="quiet" type="button" hidden>取消选择</button><button id="monthly-run-selected" class="primary" type="button" disabled>执行所选</button></div></div>
     <div class="monthly-table-wrap"><table class="monthly-table" aria-label="每月话费券账号表格"><colgroup><col class="monthly-col-select"><col class="monthly-col-account"><col class="monthly-col-direct"><col class="monthly-col-progress"><col class="monthly-col-bonus"><col class="monthly-col-auto"><col><col class="monthly-col-actions"></colgroup><thead><tr><th scope="col" aria-label="选择账号">选</th><th scope="col">共享账号</th><th scope="col">本月直接领取</th><th scope="col">额外领取任务</th><th scope="col">本月额外领取</th><th scope="col">自动执行</th><th scope="col">最近结果 · 北京时间</th><th scope="col">操作</th></tr></thead><tbody id="monthly-accounts"><tr><td class="monthly-empty" colspan="8">正在读取各账号领取情况…</td></tr></tbody></table></div>
     <div class="monthly-panel-footer"><span id="monthly-sync">北京时间 · 自动刷新</span><span>贵州移动活动，资格与奖品以官方结果为准。</span></div>
   </section>
@@ -20,10 +20,23 @@
 <dialog id="monthly-settings" aria-labelledby="monthly-settings-title"><form id="monthly-settings-form">
   <div class="monthly-dialog-heading"><div><h2 id="monthly-settings-title">自动执行设置</h2><p id="monthly-settings-description"></p></div><button type="button" class="close quiet" data-monthly-close aria-label="关闭自动设置">×</button></div>
   <label class="monthly-toggle"><span><strong>每天自动检查</strong><small>使用共享账号，无需重复登录。</small></span><input id="monthly-auto-enabled" type="checkbox" role="switch"></label>
-  <div id="monthly-time-field" class="monthly-time-field"><label for="monthly-auto-time">执行时间 <small>北京时间</small></label><input id="monthly-auto-time" type="time" value="08:05" required></div>
-  <p class="monthly-settings-note">自动领取本月的直接话费券，完成三个浏览任务，并每天打卡一次。累计打卡三天且官方任务进度达到 100% 后，领取额外话费券；已经领取的项目会跳过。</p>
+  <div id="monthly-time-field" class="monthly-time-field"><label for="monthly-auto-time">每日开始时间 <small>北京时间</small></label><input id="monthly-auto-time" type="time" value="08:05" required></div>
+  <div class="monthly-retry-fields">
+    <div class="monthly-time-field"><label for="monthly-retry-interval">失败重试间隔 <small>分钟</small></label><input id="monthly-retry-interval" type="number" min="1" max="1440" step="1" value="5" required></div>
+    <div class="monthly-time-field"><label for="monthly-max-retries">失败重试次数 <small>0 表示不重试</small></label><input id="monthly-max-retries" type="number" min="0" max="100" step="1" value="5" required></div>
+  </div>
+  <p id="monthly-retry-note" class="monthly-settings-note">首次失败后最多再重试 5 次，间隔 5 分钟；不符合活动资格的账号仍每天检查一次。</p>
+  <p class="monthly-settings-note">到点开始检查，晚启动或恢复登录后会补做当天未完成的任务。自动领取本月的直接话费券，完成三个浏览任务，并每天打卡一次。累计打卡三天且官方任务进度达到 100% 后，领取额外话费券；已经领取的项目会跳过。</p>
   <p id="monthly-settings-error" class="monthly-settings-error" role="alert" hidden></p>
   <div class="monthly-dialog-actions"><button type="button" class="secondary" data-monthly-close>取消</button><button id="monthly-settings-save" type="submit" class="primary">保存设置</button></div>
+</form></dialog>
+<dialog id="monthly-page-settings" aria-labelledby="monthly-page-title"><form id="monthly-page-form">
+  <div class="monthly-dialog-heading"><div><h2 id="monthly-page-title">活动地址</h2><p>更新每月话费券的官方页面入口，所有账号共用。</p></div><button type="button" class="close quiet" data-monthly-page-close aria-label="关闭活动地址设置">×</button></div>
+  <label class="monthly-page-label" for="monthly-entry-url">官方活动页面地址</label>
+  <textarea id="monthly-entry-url" rows="4" required spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="粘贴中国移动官方活动页面的完整地址"></textarea>
+  <p class="monthly-settings-note">保留完整的地址和渠道参数。活动入口或渠道参数更新时可在这里修改；如果官方接口或登录规则变化，仍需要适配程序。</p>
+  <p id="monthly-page-error" class="monthly-settings-error" role="alert" hidden></p>
+  <div class="monthly-dialog-actions"><button id="monthly-page-default" type="button" class="quiet">使用默认地址</button><button type="button" class="secondary" data-monthly-page-close>取消</button><button id="monthly-page-save" type="submit" class="primary">保存地址</button></div>
 </form></dialog>
 </body>
 </html>

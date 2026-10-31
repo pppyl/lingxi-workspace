@@ -83,6 +83,14 @@ class DatabaseLoginStorage:
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
                 connection.execute('CREATE TABLE IF NOT EXISTS monthly_coupon_data '
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS star_day_data '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS activity_state '
+                    '(platform_id TEXT PRIMARY KEY, payload BLOB NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS credential_sessions '
+                    '(scope TEXT NOT NULL, login_id TEXT NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(scope,login_id))')
+                connection.execute('CREATE TABLE IF NOT EXISTS platform_registry '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
                 connection.execute('CREATE TABLE IF NOT EXISTS coupon_use_data '
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
         except (sqlite3.Error, OSError) as error:
@@ -91,6 +99,72 @@ class DatabaseLoginStorage:
     def _connect(self):
         from contextlib import closing
         return closing(sqlite3.connect(self.path, timeout=5))
+
+    def load_activity_data(self, platform_id):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM activity_state WHERE platform_id=?', (platform_id,)).fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('活动数据读取失败，已保留原数据库。') from error
+
+    def load_credentials(self, scope, login_id):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM credential_sessions WHERE scope=? AND login_id=?', (scope,login_id)).fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('活动凭据读取失败，已保留原数据库。') from error
+
+    def save_credentials(self, scope, login_id, data):
+        payload = self.protect(json.dumps(data,ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO credential_sessions(scope,login_id,payload) VALUES(?,?,?) '
+                    'ON CONFLICT(scope,login_id) DO UPDATE SET payload=excluded.payload', (scope,login_id,payload))
+        except sqlite3.Error as error:
+            raise LoginStorageError('活动凭据保存失败，本次未提交。') from error
+
+    def delete_credentials(self, login_id=None, scope=None):
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('DELETE FROM credential_sessions WHERE (? IS NULL OR login_id=?) AND (? IS NULL OR scope=?)',
+                                   (login_id,login_id,scope,scope))
+        except sqlite3.Error as error:
+            raise LoginStorageError('活动凭据清理失败。') from error
+
+    def save_activity_data(self, platform_id, data):
+        payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO activity_state(platform_id,payload) VALUES(?,?) '
+                    'ON CONFLICT(platform_id) DO UPDATE SET payload=excluded.payload', (platform_id, payload))
+        except sqlite3.Error as error:
+            raise LoginStorageError('活动数据保存失败，本次未提交。') from error
+
+    def delete_activity_data(self, platform_id):
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('DELETE FROM activity_state WHERE platform_id=?', (platform_id,))
+        except sqlite3.Error as error:
+            raise LoginStorageError('活动数据清理失败，账号数据未受影响。') from error
+
+    def load_platform_registry(self):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM platform_registry WHERE id=1').fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('平台管理记录读取失败，已保留原数据库。') from error
+
+    def save_platform_registry(self, data):
+        payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO platform_registry(id,payload) VALUES(1,?) '
+                    'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (payload,))
+        except sqlite3.Error as error:
+            raise LoginStorageError('平台管理记录保存失败，请稍后重试。') from error
 
     def load_checkin_data(self):
         try:
@@ -133,6 +207,23 @@ class DatabaseLoginStorage:
                     'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (payload,))
         except sqlite3.Error as error:
             raise LoginStorageError('每月话费券数据保存失败，本次未提交。') from error
+
+    def load_star_day_data(self):
+        try:
+            with self.lock, self._connect() as connection:
+                row = connection.execute('SELECT payload FROM star_day_data WHERE id=1').fetchone()
+            return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
+        except (sqlite3.Error, ValueError, UnicodeError) as error:
+            raise LoginStorageError('星动日数据读取失败，已保留原数据库。') from error
+
+    def save_star_day_data(self, data):
+        payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        try:
+            with self.lock, self._connect() as connection, connection:
+                connection.execute('INSERT INTO star_day_data(id,payload) VALUES(1,?) '
+                    'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (payload,))
+        except sqlite3.Error as error:
+            raise LoginStorageError('星动日数据保存失败，本次未提交。') from error
 
     def save_checkin_data(self, data):
         payload = self.protect(json.dumps(data, ensure_ascii=False).encode('utf-8'))

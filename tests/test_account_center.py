@@ -205,7 +205,8 @@ class AccountCenterTests(unittest.TestCase):
         self.assertEqual(self.http.get('/api/status').json['phone_masked'], '199****0002')
         again = self.http.post('/recharge/api/login/attach', json={'login_id': self.a.id}, headers=self.headers)
         self.assertEqual(again.json['account_id'], attached['account_id'])
-        self.clients[0].connect_app.assert_called_with(cookie='JSESSIONID=renewed', phone=self.a.phone, profile={})
+        self.assertEqual(self.clients[0].connect_app.call_count,1)
+        self.assertEqual(self.clients[0].app_credentials_provider()['cookie'],'JSESSIONID=renewed')
         for private in (b'19900000001', b'JSESSIONID=renewed', b'renewed-token', b'new-refresh'):
             self.assertNotIn(private, response.data)
 

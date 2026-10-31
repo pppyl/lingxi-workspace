@@ -1,0 +1,1 @@
+"""Finite golden-autumn campaign."""

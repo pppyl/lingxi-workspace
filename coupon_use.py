@@ -28,6 +28,11 @@ from coupon_alipay import CouponAlipay, CouponAlipayError
 from app_login import AppLoginSession
 
 
+# The official recharge confirmation states payment must finish within 30 minutes.
+# This is the order's payment window, independent of coupon validity or login TTL.
+PAYMENT_WINDOW_SECONDS = 30*60
+
+
 class CouponUseError(CouponError):
     pass
 
@@ -104,11 +109,12 @@ def _choices(rule, amount_rule=None):
 
 class CouponUseManager:
     def __init__(self, credentials_provider_by_id, storage=None, *, payment_credentials_provider_by_id=None,
-                 wallet_entry=ENTRY):
+                 wallet_entry=ENTRY, credential_cache=None):
         self.credentials = credentials_provider_by_id
         self.payment_credentials = payment_credentials_provider_by_id or credentials_provider_by_id
         self.storage = storage
         self.wallet_entry = wallet_entry
+        self.credential_cache = credential_cache
         self.lock, self.operations = RLock(), {}
         self.payment_challenges = {}
         self.data = (storage.load_coupon_use_data() if storage is not None else None) or {}
@@ -119,11 +125,36 @@ class CouponUseManager:
                     record.update(state='unknown', result={'state': 'unknown',
                         'message': '上次提交中断，结果待核实；请在 APP 查询，本程序不会重复提交。'})
             self._save(recovered)
+        self._expire_pending()
 
     def _save(self, data):
         if self.storage is not None:
             self.storage.save_coupon_use_data(data)
         self.data = data
+
+    def _expire_pending(self):
+        now = time.time()
+        with self.lock:
+            updated = None
+            for key,record in self.data.items():
+                if record['state'] != 'payment_required':continue
+                deadline = record.get('payment_expires_at')
+                if deadline is None and record.get('created_at') is not None:
+                    deadline = record['created_at']+PAYMENT_WINDOW_SECONDS
+                # Old records without a creation time need the existing official
+                # order check; neither order number nor coupon absence proves age.
+                if deadline is None:continue
+                expired = deadline <= now
+                if expired or record.get('payment_expires_at') != deadline:
+                    if updated is None:updated = deepcopy(self.data)
+                    row = updated[key]
+                    row['payment_expires_at'] = deadline
+                    if expired:
+                        row.update(state='closed',closed_at=now,closed_reason='payment_window_ended',
+                            result={'state':'closed','message':'此订单的 30 分钟付款窗口已结束，已移出待支付列表；支付和到账结果以官方订单记录为准。'})
+                        row.pop('payment',None)
+                        self.payment_challenges.pop((row.get('login_id'),row.get('order_id')),None)
+            if updated is not None:self._save(updated)
 
     @staticmethod
     def _close(operation):
@@ -151,6 +182,49 @@ class CouponUseManager:
                        and operation.result is None and now < operation.expires
                        for operation in self.operations.values())
 
+    def query(self, login_id, *, state='available', page=1, sort='default'):
+        """Do not reauthenticate a wallet while its coupon/SMS flow is live."""
+        self._prune()
+        client = CouponClient(lambda: self.credentials(login_id),credential_cache=self.credential_cache)
+        with self.lock:
+            operation = next((item for item in reversed(self.operations.values())
+                if item.login_id == login_id and item.context is not None and item.result is None), None)
+        result = None
+        recovered = False
+        if operation is not None:
+            with operation.lock:
+                if operation.context is not None and operation.result is None and time.monotonic() < operation.expires:
+                    try:
+                        result = client.query(state=state, page=page, sort=sort,
+                            wallet_session=(operation.client, operation.user, operation.current))
+                    except CouponError as error:
+                        if error.code != 'COUPON_LOGIN_REQUIRED':raise
+                        # An official auth rejection means this OTP session is
+                        # already invalid. Close it before the one read recovery.
+                        self._close(operation)
+                        operation.expires = 0
+                        recovered = True
+        if result is None:
+            result = client.query(state=state, page=page, sort=sort,recover_login=not recovered)
+        with self.lock:
+            updated = deepcopy(self.data)
+            confirmed = {}
+            for item in result['items']:
+                if item['category'] != 'flow' or item['status'] != 'used':
+                    continue
+                key = hashlib.sha256(_json([login_id, item['id']]).encode()).hexdigest()
+                record = updated.get(key)
+                if record and record['state'] == 'unknown':
+                    accepted = {'state': 'accepted', 'message': '流量券已兑换，官方卡券记录已确认使用。'}
+                    record.update(state='accepted', result=accepted)
+                    confirmed[key] = accepted
+            if confirmed:
+                self._save(updated)
+                for item in self.operations.values():
+                    if item.key in confirmed and item.result is not None and item.result['state'] == 'unknown':
+                        item.result = confirmed[item.key]
+        return result
+
     def _check_submission(self, key):
         record = self.data.get(key)
         if record and record['state'] in ('submitted', 'unknown', 'accepted', 'payment_required'):
@@ -159,6 +233,7 @@ class CouponUseManager:
 
     def bind_pending(self, login_id, items):
         """Attach legacy orders only when their original account/coupon digest matches."""
+        self._expire_pending()
         with self.lock:
             updated = deepcopy(self.data)
             changed = False
@@ -172,10 +247,12 @@ class CouponUseManager:
                 self._save(updated)
 
     def pending(self, login_id):
+        self._expire_pending()
         with self.lock:
             return [dict(order_id=record['order_id'], coupon_name=record.get('coupon_name', ''),
                          coupon_id=record.get('coupon_id', ''), amount=record.get('charge_amount'),
-                         created_at=record.get('created_at'))
+                         created_at=record.get('created_at'),expires_at=record.get('payment_expires_at'),
+                         expires_in=max(0,record['payment_expires_at']-time.time()) if record.get('payment_expires_at') is not None else None)
                     for record in self.data.values()
                     if record.get('login_id') == login_id and record['state'] == 'payment_required']
 
@@ -183,11 +260,13 @@ class CouponUseManager:
         if (not isinstance(login_id, str) or not isinstance(order_id, str) or not isinstance(refresh, bool)
                 or not isinstance(captcha_token, str) or len(captcha_token) > 4096):
             raise CouponUseError('请选择本机已生成的待支付订单。', 'INVALID_ORDER', 400)
+        self._expire_pending()
         with self.lock:
             record = next((deepcopy(row) for row in self.data.values()
-                           if row.get('login_id') == login_id and row.get('order_id') == order_id
-                           and row['state'] == 'payment_required'), None)
-        if record is None:
+                           if row.get('login_id') == login_id and row.get('order_id') == order_id), None)
+        if record is not None and record['state'] == 'closed':
+            return deepcopy(record['result'])
+        if record is None or record['state'] != 'payment_required':
             raise CouponUseError('未找到此账号的待支付订单，请刷新卡券列表。', 'ORDER_NOT_FOUND', 404)
         with self.lock:
             challenge = self.payment_challenges.get((login_id, order_id))
@@ -241,7 +320,9 @@ class CouponUseManager:
                 updated = deepcopy(self.data)
                 for row in updated.values():
                     if row.get('order_id') == order_id and row.get('login_id') == login_id:
-                        row.update(state='closed', result=result)
+                        row.update(state='closed',result=result,closed_at=time.time(),closed_reason='provider_closed')
+                        row.pop('payment',None)
+                self.payment_challenges.pop((login_id,order_id),None)
                 self._save(updated)
             return result
         if payment.get('payment_type') != 'alipay_web':
@@ -334,7 +415,7 @@ class CouponUseManager:
                             '531015': '下单操作频繁，请稍后再试（531015）。',
                             '531022': '官方检测到充值环境异常（531022），本次未生成支付订单。可在当前窗口通过短信重新登录后重试；若仍失败，请切换网络再试。'}
                 message = messages.get(code, '官方拒绝此操作（'+code[:30]+'），本次未完成。')
-                if code in ('500002', '500004') and isinstance(value.get('retMsg'), str):
+                if code in ('400010', '500002', '500004') and isinstance(value.get('retMsg'), str):
                     detail = value['retMsg']
                     for secret in (user['number'], operation.serial, *[body.get(key) for key in
                             ('pCardNo', 'pcardNo', 'pcardPassword', 'smsCode', 'sms_code', 'serialNo', 'serial_no', 'md5', 'wtAcId')]):
@@ -348,7 +429,10 @@ class CouponUseManager:
             if value.get('data') is None:
                 return {}
             try:
-                return _unpack(value, gcm=gcm)
+                # The rights callback uses retCode for acceptance; a payload
+                # only adds the optional second-SMS instruction, unlike orders.
+                return _unpack(value, gcm=gcm, allow_non_object=(operation.kind == 'rights'
+                    and path.startswith('/i/v1/cust/rightsCouponsUse/')))
             except CouponError as error:
                 raise error_class('官方响应无法解析，请到 APP 核实结果。', 'UPSTREAM_FORMAT') from error
         except (ValueError, TypeError, KeyError, InvalidTag) as error:
@@ -380,6 +464,12 @@ class CouponUseManager:
             raise CouponUseError('官方未返回有效用券规则，本次没有提交。', 'RULE_MISSING', 409)
         return rule
 
+    def _rights_detail(self, operation):
+        user, row = operation.user, operation.row
+        return self._post(operation, '/i/v1/cust/pcardInfoQry/'+user['number'],
+            {'loginNo': user['number'], 'channelId': '11', 'batchId': '', 'loginType': user['login_type'],
+             'pcardPasswd': row['pCardNo'], 'pcardType': row['pCardType'], 'provincode': user['province']}, gcm=True)
+
     def _initialize_app(self, operation):
         """Use the distinct wallet and recharge APP initialization protocols."""
         operation.current()
@@ -408,6 +498,10 @@ class CouponUseManager:
             if not data.get('msgId'):
                 raise CouponUseError('官方未返回 APP 用券会话，请重新打开用券窗口。', 'WALLET_INIT_FAILED', 409)
             operation.user['msg_id'] = data['msgId']
+            # appsso2 replaces userBaseInfo together with the native msgId;
+            # rightsCouponsUse must not retain loginfo's H5 login type.
+            carrier = profile.get('carrierOperator')
+            operation.user['login_type'] = '3' if carrier and carrier != '002' else '0'
         else:
             number = operation.user['number']
             shortened = number[:2]+number[3:]
@@ -420,6 +514,7 @@ class CouponUseManager:
     def prepare(self, login_id, coupon_id):
         if not isinstance(login_id, str) or not login_id or not isinstance(coupon_id, str) or not re.fullmatch(r'[0-9a-f]{24}', coupon_id):
             raise CouponUseError('请选择账号及卡券。', 'INVALID_SELECTION', 400)
+        self._expire_pending()
         self._prune()
         key = hashlib.sha256(_json([login_id, coupon_id]).encode()).hexdigest()
         with self.lock:
@@ -432,7 +527,14 @@ class CouponUseManager:
                 return {'state': 'payment_required', 'order': {'order_id': record['order_id'],
                         'coupon_name': record.get('coupon_name', ''), 'amount': record.get('charge_amount')}}
             self._check_submission(key)
-        client = CouponClient(lambda: self.credentials(login_id), entry=self.wallet_entry)
+            existing = next((item for item in reversed(self.operations.values())
+                if item.login_id == login_id and item.context is not None and item.result is None), None)
+        if existing is not None and existing.key == key:
+            with existing.lock:
+                if existing.context is not None and existing.result is None and time.monotonic() < existing.expires:
+                    existing.current()
+                    return deepcopy(existing.preview)
+        client = CouponClient(lambda: self.credentials(login_id), entry=self.wallet_entry,credential_cache=self.credential_cache)
         context = client._session()
         http, user, current = context.__enter__()
         operation = SimpleNamespace(id=secrets.token_urlsafe(24), login_id=login_id, coupon_id=coupon_id, key=key,
@@ -459,9 +561,7 @@ class CouponUseManager:
             if kind == 'rights':
                 if not row.get('activityId') or not row.get('stallId'):
                     raise CouponUseError('官方未返回完整兑换信息，请在 APP 查看此券。', 'RULE_MISSING', 409)
-                detail = self._post(operation, '/i/v1/cust/pcardInfoQry/'+user['number'],
-                    {'loginNo': user['number'], 'channelId': '11', 'batchId': '', 'loginType': user['login_type'],
-                     'pcardPasswd': row['pCardNo'], 'pcardType': row['pCardType'], 'provincode': user['province']}, gcm=True)
+                detail = self._rights_detail(operation)
                 if detail.get('agreementName') or detail.get('agreementUrl'):
                     raise CouponUseError('此券需要阅读并确认官方协议，请前往 APP 兑换。', 'VERIFICATION_REQUIRED', 409)
                 operation.detail, operation.rule = detail, {}
@@ -483,15 +583,16 @@ class CouponUseManager:
                 operation.choices = _choices(operation.rule, pay_rules.get('amountRule'))
             current()
             operation.requires_sms = bool(requires_sms)
-            with self.lock:
-                self.operations[operation.id] = operation
-            return {'operation_id': operation.id, 'kind': operation.kind,
+            operation.preview = {'operation_id': operation.id, 'kind': operation.kind,
                 'coupon_name': _item(row)['name'], 'account_masked': user['number'][:3]+'****'+user['number'][-4:],
                 'coupon_amount': _decimal_text(amount), 'coupon_unit': str(row.get('unitFormat') or row.get('unitName') or '元'),
                 'description': str(row.get('stallInfo') or ''),
                 'requires_sms': operation.requires_sms,
                 'choices': [{'value': choice['value'], 'label': choice['label']} for choice in operation.choices],
                 'message': '确认后提交兑换申请，无需支付费用。' if operation.kind != 'recharge' else '确认后生成待支付充值订单，并显示官方支付入口。'}
+            with self.lock:
+                self.operations[operation.id] = operation
+            return deepcopy(operation.preview)
         except BaseException:
             self._close(operation)
             raise
@@ -616,7 +717,8 @@ class CouponUseManager:
                                          'RISK_INITIALIZATION_FAILED', 400)
                 operation.client.cookies.set('stc-rrt-token', operation.risk_token,
                     domain='touch.10086.cn', path='/i', secure=True)
-                operation.client.headers['User-Agent'] = operation.risk_user_agent
+                if operation.kind == 'exchange':
+                    operation.client.headers['User-Agent'] = operation.risk_user_agent
             if operation.kind == 'exchange':
                 body = {'activityNO': '', 'amount': 0, 'channel': '11', 'chargeMoney': row['couponValue'],
                     'choseMoney': row['couponValue'], 'homeProv': user['province'], 'md5': operation.md5,
@@ -660,8 +762,10 @@ class CouponUseManager:
                 updated = deepcopy(self.data)
                 updated[operation.key] = {'state': 'submitted', 'operation_id': operation.id, 'result': None}
                 if operation.kind == 'recharge':
+                    submitted_at = time.time()
                     updated[operation.key].update(login_id=operation.login_id, coupon_id=operation.coupon_id,
-                        coupon_name=_item(row)['name'], created_at=time.time(),
+                        coupon_name=_item(row)['name'],created_at=submitted_at,
+                        payment_expires_at=submitted_at+PAYMENT_WINDOW_SECONDS,
                         charge_amount=choice['payment'], credit_amount=choice['credit'])
                 self._save(updated)
             challenge = False
@@ -681,6 +785,16 @@ class CouponUseManager:
                     result = {'state': 'accepted', 'message': '兑换申请已受理，请关注话费到账情况；兑换失败时官方将退还卡券。'}
             except _UnknownSubmission as error:
                 result = {'state': 'unknown', 'message': str(error)}
+                if operation.kind == 'rights' and error.code == 'RESULT_PENDING':
+                    # A processing response can race with successful redemption.
+                    # Read the same coupon once; never resubmit the use request.
+                    try:
+                        detail = self._rights_detail(operation)
+                    except CouponError as check_error:
+                        logging.getLogger(__name__).warning('coupon_pending_check_failed %s', check_error.code)
+                    else:
+                        if str(detail.get('couponStatus')) == '10':
+                            result = {'state': 'accepted', 'message': '流量券已兑换，官方卡券记录已确认使用。'}
             except CouponError as error:
                 if operation.kind == 'recharge' and error.code in ('531023', '531027'):
                     challenge = True

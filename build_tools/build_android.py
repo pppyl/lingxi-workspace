@@ -14,17 +14,23 @@ from runtime_paths import VERSION
 
 def main():
     staging = ROOT / '.build/android-python'
+    if staging.exists():
+        if staging.resolve().parent != (ROOT/'.build').resolve():
+            raise RuntimeError('Android staging path escaped the build directory')
+        shutil.rmtree(staging)
     staging.mkdir(parents=True, exist_ok=True)
     modules = ('app app_login android_bridge android_runtime android_activity_bridge http_transport '
                'checkin_client checkin_flash checkin_scheduler coupon_client coupon_use coupon_captcha coupon_cashier_h5 coupon_alipay alipay_h5 '
-               'lingxi_client lingxi_scheduler login_storage monthly_coupon_auth monthly_coupon_client '
-               'monthly_coupon_scheduler runtime_paths session_maintenance unified_logins').split()
+               'lingxi_client lingxi_scheduler login_storage credential_cache network_access monthly_coupon_auth monthly_coupon_client '
+               'monthly_coupon_scheduler star_day_client star_day_auth star_day_scheduler star_day_sms star_day_crypto '
+               'platform_manager runtime_paths session_maintenance unified_logins').split()
     for name in modules:
         source = ROOT / (name + '.py')
         if source.exists(): shutil.copy2(source, staging / source.name)
     shutil.copy2(ROOT / 'app_login_public_key.json', staging / 'app_login_public_key.json')
     for directory in ('static', 'templates', 'recharge/static', 'recharge/templates'):
         shutil.copytree(ROOT / directory, staging / directory, dirs_exist_ok=True)
+    shutil.copytree(ROOT/'activities', staging/'activities', ignore=shutil.ignore_patterns('__pycache__', 'tests', 'android'))
     for name in ('__init__', 'app', 'accounts', 'cmcc', 'scheduler'):
         shutil.copy2(ROOT / 'recharge' / (name + '.py'), staging / 'recharge' / (name + '.py'))
     for path in staging.rglob('*'):

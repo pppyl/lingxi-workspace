@@ -12,6 +12,8 @@ from .accounts import atomic_json
 from .cmcc import ActivityError, SHANGHAI, parse_server_time
 
 ACTIVE = {'preparing', 'armed', 'running', 'cancelling'}
+LOGIN_REQUIRED_MESSAGE = '共享账号需要恢复登录，恢复后自动加入周三领取。'
+LOGIN_RECOVERED_MESSAGE = '共享账号已登录，已自动加入周三领取；每周三 07:55 准备，08:00 开始领取。'
 # These responses require a user action; retries must not attempt to get past them.
 ACTION_REQUIRED = {'GOTO_LOGIN', 'LOGIN_REQUIRED', 'BROWSER_MISSING', 'BROWSER_CLOSED',
                    '160030', '160019', 'CSRF_REJECTED', 'APP_LOGIN_REQUIRED', 'APP_SSO_REJECTED'}
@@ -43,7 +45,80 @@ class ClaimScheduler:
         self.wake = threading.Event()
         self.thread = None
         self.load_error = ''
+        self.shared_accounts = None
+        self.ensure_shared_account = None
+        self.prepare_account = None
         self._load()
+
+    def configure_automatic(self, accounts, ensure_account, prepare_account=None):
+        self.shared_accounts, self.ensure_shared_account, self.prepare_account = accounts, ensure_account, prepare_account
+
+    def _sync_automatic(self):
+        if self.shared_accounts is None or self.load_error:
+            return
+        current = self.now()
+        target = current.replace(hour=8, minute=0, second=0, microsecond=0)
+        target += timedelta(days=(2-current.weekday()) % 7)
+        week = target.date().isoformat()
+        shared = self.shared_accounts()
+        known = {a['id'] for a in shared}
+        by_id = {a['id']:a for a in shared}
+        changed = False
+        with self.lock:
+            for account_id, job in list(self.jobs.items()):
+                account = self.manager.get(account_id)
+                if account.pool_login_id not in known and account_id not in self.workers:
+                    self.jobs.pop(account_id)
+                    changed = True
+                elif account_id not in self.workers and by_id[account.pool_login_id]['status'] != 'active' and not job.get('blocked_login'):
+                    job.update(managed=True, enabled=False, next_run_at=None, state='failed', blocked_login=True,
+                               attempt_status=by_id[account.pool_login_id]['status'],
+                               message=LOGIN_REQUIRED_MESSAGE, updated_at=current.isoformat())
+                    changed = True
+            for item in shared:
+                if item['status'] != 'active':
+                    continue
+                account = self.ensure_shared_account(item)
+                if account.id in self.workers:
+                    continue
+                job = self.jobs.get(account.id)
+                if job is None:
+                    self.jobs[account.id] = {'account_id':account.id, 'managed':True,
+                        'enabled':True, 'state':'waiting', 'run_at':target.isoformat(),
+                        'next_run_at':target.isoformat(), 'weekly':True, 'immediate':False,
+                        **retry_policy({}), 'attempts':0, 'submissions':0, 'history':[], 'result':None,
+                        'message':'每周三 07:55 自动准备，08:00 开始领取', 'updated_at':current.isoformat()}
+                    changed = True
+                    continue
+                if not job.get('managed'):
+                    job.update(managed=True, weekly=True, immediate=False)
+                    finished = parse_server_time(job.get('finished_at'))
+                    if finished and job['state'] in {'success','completed','exhausted'}:
+                        job['completed_week'] = finished.date().isoformat()
+                    changed = True
+                next_at = target+timedelta(days=7) if week in (job.get('completed_week'), job.get('skip_week')) else target
+                retry_at = parse_server_time(job.get('retry_at'))
+                revision_changed = (job.get('attempt_revision') != item.get('credential_revision', 0)
+                                    or job.get('attempt_status') != item['status'])
+                blocked = (job.get('failed_week') == week and not revision_changed
+                           and (not job.get('retryable') or retry_at is not None and current < retry_at))
+                if blocked:
+                    continue
+                login_recovered = bool(job.get('blocked_login'))
+                stale_login_message = job.get('message') == LOGIN_REQUIRED_MESSAGE
+                recovered_failure = (revision_changed and job.get('failure_code') in
+                                     {'APP_LOGIN_REQUIRED', 'GOTO_LOGIN', 'LOGIN_REQUIRED'})
+                if not job.get('enabled') or job.get('next_run_at') != next_at.isoformat() or login_recovered:
+                    job.update(enabled=True, next_run_at=next_at.isoformat(), run_at=next_at.isoformat(),
+                               state='waiting', blocked_login=False, updated_at=current.isoformat())
+                    changed = True
+                if login_recovered or stale_login_message or recovered_failure and job['state'] == 'waiting':
+                    job.update(message=LOGIN_RECOVERED_MESSAGE, updated_at=current.isoformat())
+                    if recovered_failure:
+                        job.pop('failure_code', None)
+                    changed = True
+            if changed:
+                self._save()
 
     def _load(self):
         if not self.storage or not self.storage.exists():
@@ -54,6 +129,8 @@ class ClaimScheduler:
                 self.manager.get(job['account_id'])
                 retry_policy(job)
                 if job.get('state') in {'running', 'cancelling'}:
+                    if job.get('managed'):
+                        job['uncertain'] = True
                     job.update(state='interrupted', enabled=False, next_run_at=None,
                                message='服务曾在执行中退出，请先查询奖品再重新启用')
                 elif job.get('state') in {'preparing', 'armed'}:
@@ -85,6 +162,9 @@ class ClaimScheduler:
     def snapshots(self):
         with self.lock:
             return copy.deepcopy(self.jobs)
+
+    def sync_automatic(self):
+        self._sync_automatic()
 
     def busy(self, account_id):
         with self.lock:
@@ -128,6 +208,9 @@ class ClaimScheduler:
                            state='cancelling' if account_id in self.workers else 'cancelled',
                            message='正在停止；已发送的请求仍会记录结果' if event else '已停止',
                            updated_at=self.now().isoformat())
+                if job.get('managed'):
+                    current = self.now()
+                    job['skip_week'] = (current+timedelta(days=(2-current.weekday()) % 7)).date().isoformat()
             self._save()
         self.wake.set()
 
@@ -153,6 +236,7 @@ class ClaimScheduler:
 
     def tick(self):
         """A deterministic dispatch boundary, also used by tests."""
+        self._sync_automatic()
         with self.lock:
             for account_id, job in list(self.jobs.items()):
                 if not job.get('enabled') or account_id in self.workers:
@@ -162,9 +246,10 @@ class ClaimScheduler:
                     continue
                 account = self.manager.get(account_id)
                 current = account.client.server_now() if account.client.clock_anchor else self.now()
-                if current < target - timedelta(seconds=30):
+                preparation = timedelta(minutes=5) if job.get('managed') else timedelta(seconds=30)
+                if current < target-preparation:
                     continue
-                if current > target + timedelta(minutes=5):
+                if current > target + timedelta(minutes=5) and not job.get('managed'):
                     self._finish(account_id, 'missed', '错过执行时间，请重新预约', current=current)
                     continue
                 event = threading.Event()
@@ -184,7 +269,7 @@ class ClaimScheduler:
             self.wake.wait(0.1)
             self.wake.clear()
 
-    def _finish(self, account_id, state, message, *, result=None, current=None):
+    def _finish(self, account_id, state, message, *, result=None, current=None, error=None):
         with self.lock:
             job = self.jobs[account_id]
             next_at = None
@@ -197,15 +282,36 @@ class ClaimScheduler:
             self._update(account_id, state=state, message=message, result=result, log=True,
                          enabled=enabled, next_run_at=next_at.isoformat() if next_at else None,
                          finished_at=self.now().isoformat())
+            if job.get('managed'):
+                week = parse_server_time(job['run_at']).date().isoformat()
+                if state in {'success','exhausted','completed'}:
+                    job['completed_week'] = week
+                    job['uncertain'] = False
+                elif state == 'failed':
+                    item = next((a for a in self.shared_accounts() if a['id'] == self.manager.get(account_id).pool_login_id), {})
+                    job.update(failed_week=week, attempt_revision=item.get('credential_revision', 0),
+                               attempt_status=item.get('status'),
+                               failure_code=error.code if error is not None else None,
+                               retryable=bool(error is not None and error.status != 401
+                                   and error.code not in ACTION_REQUIRED and error.retryable is not False),
+                               retry_at=(self.now()+timedelta(minutes=1)).isoformat(),
+                               uncertain=self.manager.get(account_id).client.uncertain)
+                self._save()
 
     def _worker(self, account_id, target, cancellation):
         account = self.manager.get(account_id)
         client = account.client
         try:
+            if self.jobs[account_id].get('managed') and self.prepare_account is not None:
+                self.prepare_account(account)
             self._update(account_id, state='preparing', attempts=0, submissions=0, result=None,
                          run_at=target.isoformat(), message='检查官方会话、服务器时间和设备标识', log=True)
             try:
                 with client.operation_lock:
+                    if account.pool_login_id and client.mode != 'app':
+                        client.renew_app_session()
+                    if self.jobs[account_id].get('uncertain'):
+                        client.uncertain = True
                     state = client.refresh(automatic=True)
                     self.manager.update(account, state)
             except ActivityError as error:
@@ -233,7 +339,7 @@ class ClaimScheduler:
             self._run_attempts(account_id, cancellation)
         except ActivityError as error:
             self.manager.update(account, error=error)
-            self._finish(account_id, 'failed', str(error))
+            self._finish(account_id, 'failed', str(error), error=error)
         except Exception as error:
             self._finish(account_id, 'failed', f'执行异常：{type(error).__name__}，请检查后重新启用')
         finally:
@@ -270,7 +376,7 @@ class ClaimScheduler:
                     self._finish(account_id, 'completed', last_message)
                     return
                 if error.code in ACTION_REQUIRED or error.status == 401 or error.retryable is False:
-                    self._finish(account_id, 'failed', last_message)
+                    self._finish(account_id, 'failed', last_message, error=error)
                     return
             if attempt < settings['max_attempts']:
                 interval = self.rng.uniform(settings['interval_min'], settings['interval_max'])

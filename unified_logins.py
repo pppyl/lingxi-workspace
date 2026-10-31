@@ -136,8 +136,8 @@ class UnifiedLogins:
         """Commit a refresh only if its input version is still current.
 
         Returns the same SavedLogin on success, or None for a missing/stale
-        account. Refresh context is merged; a changed Cookie invalidates the
-        previous Lingxi token unless a replacement token is supplied explicitly.
+        account. Refresh context is merged; independent Lingxi credentials
+        survive an APP Cookie rotation until their own server rejects them.
         """
         if (isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
                 or expected_revision < 1 or not isinstance(cookie, str) or not cookie
@@ -151,13 +151,12 @@ class UnifiedLogins:
             record = self.records.get(phone)
             if record is None or record.credential_revision != expected_revision:
                 return None
-            changed = record.cookie != cookie
             record.cookie = cookie
             if app_context is not None:
                 record.app_context = {**record.app_context, **deepcopy(app_context)}
             if profile is not None:
                 record.profile = dict(profile)
-            record.token = token if token is not None else '' if changed else record.token
+            record.token = token if token is not None else record.token
             record.credential_revision += 1
             self.credential_revisions[phone] = record.credential_revision
             record.status, record.checked_at = 'active', 0

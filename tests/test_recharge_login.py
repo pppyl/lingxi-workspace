@@ -74,10 +74,11 @@ class MountedRechargeTests(unittest.TestCase):
     def test_module_assets_are_mounted_on_same_port(self):
         self.assertEqual(self.page.status_code, 200)
         self.assertIn(b'data-api-base="/recharge"', self.page.data)
-        self.assertIn(b'/recharge/static/app.js', self.page.data)
-        with self.http.get('/recharge/static/app.js') as asset:
+        self.assertIn(b'/recharge/static/workspace.js', self.page.data)
+        with self.http.get('/recharge/static/workspace.js') as asset:
             self.assertEqual(asset.status_code, 200)
-        self.assertIn('使用所选账号'.encode(), self.page.data)
+        self.assertIn('有效账号自动参与'.encode(), self.page.data)
+        self.assertIn('wed-tab-tasks'.encode(), self.page.data)
 
     def test_shared_login_only_uses_this_browsers_app_credentials(self):
         with self.http.session_transaction() as state:

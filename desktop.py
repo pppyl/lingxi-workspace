@@ -1,4 +1,4 @@
-"""Windows desktop entry: default browser, loopback service and notification tray."""
+"""Windows desktop entry: default browser, LAN service and notification tray."""
 from __future__ import annotations
 import argparse
 import ctypes
@@ -59,7 +59,7 @@ def main():
     if port:
         with socket.socket() as probe:
             if probe.connect_ex(('127.0.0.1',port))==0:port=0
-    server=create_server(app,host='127.0.0.1',port=port,threads=32,channel_timeout=240)
+    server=create_server(app,host=os.environ.get('LINGXI_HOST','0.0.0.0'),port=port,threads=32,channel_timeout=240)
     port=server.effective_port;url=f'http://127.0.0.1:{port}/?desktop=1'
     window=DefaultBrowserWindow(url)
 
@@ -108,6 +108,8 @@ def main():
     app.extensions['lingxi_scheduler'].start()
     app.extensions['checkin_scheduler'].start()
     app.extensions['monthly_coupon_scheduler'].start()
+    app.extensions['star_day_scheduler'].start()
+    app.extensions['platform_manager'].start()
     app.extensions['recharge_app'].extensions['scheduler'].start()
     try:
         if options.headless:quit_event.wait()
@@ -129,6 +131,8 @@ def main():
         app.extensions['lingxi_scheduler'].shutdown()
         app.extensions['checkin_scheduler'].shutdown()
         app.extensions['monthly_coupon_scheduler'].shutdown()
+        app.extensions['star_day_scheduler'].shutdown()
+        app.extensions['platform_manager'].shutdown()
         app.extensions['recharge_app'].extensions['scheduler'].stop()
         server.close()
         control_file.unlink(missing_ok=True)

@@ -76,10 +76,18 @@ def main():
         '--icon',str(assets/'app.ico'),'--noupx','--collect-all','curl_cffi','--collect-all','cryptography',
         '--collect-data','certifi','--hidden-import','pystray._win32',
         '--exclude-module','tkinter','--exclude-module','matplotlib','--exclude-module','numpy','--exclude-module','pytest']
+    activity_resources = ROOT/'.build/activity-resources'
+    if activity_resources.exists():
+        if activity_resources.resolve().parent != (ROOT/'.build').resolve():
+            raise RuntimeError('Activity staging path escaped the build directory')
+        shutil.rmtree(activity_resources)
+    shutil.copytree(ROOT/'activities', activity_resources,
+                    ignore=shutil.ignore_patterns('__pycache__', 'tests', 'android'))
     resources=[(ROOT/'static','static'),(ROOT/'templates','templates'),
         (ROOT/'app_login_public_key.json','.'),(assets,'desktop_assets'),
         (ROOT/'recharge/static','recharge/static'),(ROOT/'recharge/templates','recharge/templates'),
         (ROOT/'recharge/browser_bridge.mjs','recharge'),(ROOT/'recharge/package.json','recharge'),
+        (activity_resources,'activities'),
         (ROOT/'recharge/node_modules/playwright-core','recharge/node_modules/playwright-core'),
         (notice_dir,'third-party-notices')]
     for source,dest in resources:command+=['--add-data',str(source)+':'+dest]
@@ -88,6 +96,7 @@ def main():
     package=ROOT/'.build/dist/LingxiWorkspace'
     shutil.copy2(ROOT/'DESKTOP.md',package/'使用说明.txt')
     shutil.copy2(ROOT/'THIRD_PARTY_NOTICES.md',package/'THIRD_PARTY_NOTICES.md')
+    shutil.copy2(ROOT/'allow-lan.ps1',package/'allow-lan.ps1')
     release=ROOT/'release';release.mkdir(exist_ok=True)
     archive=release/f'LingxiWorkspace-{VERSION}-Windows-x64.zip'
     forbidden={'.local','.git','analysis','data','window-profile','browser-profile'}

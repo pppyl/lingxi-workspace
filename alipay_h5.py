@@ -17,7 +17,11 @@ import uuid
 import zlib
 from urllib.parse import parse_qsl, urlsplit
 
-from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+try:
+    from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+except ImportError:
+    # Android ships cryptography 42; decrepit was introduced in version 43.
+    from cryptography.hazmat.primitives.ciphers.algorithms import TripleDES
 from cryptography.hazmat.primitives import padding, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, modes

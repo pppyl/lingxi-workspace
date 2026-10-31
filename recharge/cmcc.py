@@ -169,7 +169,7 @@ class BrowserBridge:
 
 
 class ActivityClient:
-    def __init__(self, profile_dir=None, *, app_credentials_provider=None):
+    def __init__(self, profile_dir=None, *, app_credentials_provider=None, credential_cache=None):
         self.mode = 'none'
         self.http = requests.Session(impersonate='chrome')
         if os.environ.get('LINGXI_ANDROID') == '1':
@@ -189,6 +189,7 @@ class ActivityClient:
         self.app_login = AppLoginSession()
         self.app_material = None
         self.app_credentials_provider = app_credentials_provider
+        self.credential_cache = credential_cache
         self.app_credential_revision = None
         atexit.register(self.bridge.stop)
 
@@ -255,6 +256,30 @@ class ActivityClient:
         return latest.get('credential_revision')
 
     def connect_app(self, cookie, phone, profile=None):
+        if self.credential_cache is None:
+            return self._connect_app(cookie,phone,profile)
+        snapshot = self._app_credential_snapshot() if self.app_credentials_provider else {'phone':phone,'cookie':cookie,'profile':profile or {}}
+        if snapshot['phone'] != phone:
+            raise ActivityError('活动账号与共享账号不一致。','ACCOUNT_MISMATCH',409)
+        candidate = requests.Session(impersonate='chrome')
+        candidate.headers.update({'User-Agent':APP_UA,'Origin':'https://wx.10086.cn'})
+        try:
+            data = self.credential_cache.connect('wed-recharge',snapshot,candidate,
+                lambda:{'user':self._connect_app(cookie,phone,profile,candidate=candidate,raw=True),'checked_at':time.time()})
+            if self.http is not candidate:
+                self.http.close()
+                self.http = candidate
+            self.mode = 'app'
+            self.app_material = {'phone':phone,'cookie':cookie,'profile':dict(profile or {})}
+            self.app_credential_revision = snapshot.get('credential_revision')
+            self.cached_user = data['user']
+            self.user_checked_at = time.monotonic()-max(0,time.time()-data['checked_at'])
+            return self.public_identity(self.cached_user)
+        except Exception:
+            candidate.close()
+            raise
+
+    def _connect_app(self, cookie, phone, profile=None, *, candidate=None, raw=False):
         """Run qwhdsso's APP token flow using a real APP login Cookie.
 
         leadeon.getUserInfo().token is LoginDataBridge.getCookie(), confirmed
@@ -266,7 +291,7 @@ class ActivityClient:
             raise ActivityError('APP 登录手机号无效', 'APP_LOGIN_REQUIRED', 401)
         profile = profile or {}
         input_revision = self._check_current_credentials(cookie, phone, profile)
-        candidate = requests.Session(impersonate='chrome')
+        candidate = candidate or requests.Session(impersonate='chrome')
         candidate.headers.update({'User-Agent': APP_UA, 'Origin': 'https://wx.10086.cn'})
         try:
             page = self._follow(candidate, ENTRY)
@@ -335,7 +360,7 @@ class ActivityClient:
         self.const_id, self.uncertain = '', False
         self.cached_user = identity.get('data') or {}
         self.user_checked_at = time.monotonic()
-        return self.public_identity(self.cached_user)
+        return self.cached_user if raw else self.public_identity(self.cached_user)
 
     def open_login(self, url=None):
         result = self.bridge.rpc('open', url=validate_entry(url), visible=True, login=True)
@@ -442,9 +467,7 @@ class ActivityClient:
         renewed = False
         if self.app_credentials_provider is not None:
             latest = self._app_credential_snapshot()
-            if self.app_material and (self.app_material.get('cookie') != latest.get('cookie')
-                    or self.app_material.get('phone') != latest.get('phone')
-                    or self.app_material.get('profile') != latest.get('profile')):
+            if self.app_material and self.app_material.get('phone') != latest.get('phone'):
                 self.renew_app_session()
                 renewed = True
         try:
@@ -454,6 +477,8 @@ class ActivityClient:
         except ActivityError as error:
             if renewed or error.code not in {'GOTO_LOGIN', 'LOGIN_REQUIRED'} or not self.app_material and self.app_credentials_provider is None:
                 raise
+            if self.credential_cache is not None and getattr(self.http,'_credential_binding',None):
+                self.credential_cache.invalidate(self.http)
         self.renew_app_session()
         # A single recovery is allowed for read-only requests. SMS, login and
         # claim submissions are never retried here.
@@ -506,7 +531,7 @@ class ActivityClient:
                      prize=public_prize(data.get('getPrize')),
                      coupons=[{k: str(p.get(k, '')) for k in ('title', 'name', 'subTitle')}
                               for p in (user.get('Seckillnfos') or []) if isinstance(p, dict)])
-        if self.mode in {'browser', 'app'} and (not automatic or not self.const_id):
+        if self.mode in {'browser', 'app'} and not self.const_id:
             self.ensure_browser()
             self.const_id = self.bridge.rpc('risk').get('const_id', '')
         state['device_ready'] = bool(self.const_id)
@@ -560,6 +585,9 @@ class ActivityClient:
             self.claim_lock.release()
 
     def logout(self):
+        if self.credential_cache is not None and getattr(self.http,'_credential_binding',None):
+            _,snapshot,_,_,_ = self.http._credential_binding
+            self.credential_cache.forget(self.credential_cache.account(snapshot),scope='wed-recharge')
         if self.bridge.process and self.bridge.process.poll() is None:
             self.bridge.rpc('logout')
         self.http.close()

@@ -4,7 +4,7 @@ Protocol observed in touch.10086.cn couponNew, ownAjax and appsso scripts.
 Activity tokens and redeemable coupon numbers never leave this module.
 """
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import hashlib
 import json
@@ -65,7 +65,7 @@ def _payload(body, msg_id='', *, millis=None, gcm=True):
     return result
 
 
-def _unpack(response, *, gcm=False):
+def _unpack(response, *, gcm=False, allow_non_object=False):
     if str(response.get('retCode')) not in ('000000', '0'):
         code = str(response.get('retCode', 'UNKNOWN'))[:40]
         if code == '500003':
@@ -77,10 +77,15 @@ def _unpack(response, *, gcm=False):
         if gcm:
             blob = base64.b64decode(encoded)
             plain = AESGCM(GCM_KEY).decrypt(blob[:12], blob[12:], None).decode()
+        elif encoded.lstrip().startswith((b'{', b'[', b'"')):
+            # ownAjax also accepts outParam containing Base64(JSON).
+            plain = encoded.decode()
         else:
             plain = _cbc_decrypt(encoded)
         data = json.loads(plain)
     if not isinstance(data, dict):
+        if allow_non_object:
+            return {}
         raise CouponError('卡券服务未返回有效数据，请稍后重试。', 'UPSTREAM_FORMAT')
     return data
 
@@ -129,14 +134,17 @@ def _item(row):
 
 class CouponClient:
     def __init__(self, credentials_provider, *, session_factory=None, app_factory=AppLoginSession.from_credentials,
-                 entry=ENTRY):
+                 entry=ENTRY, credential_cache=None):
         self.credentials_provider = credentials_provider
         self.session_factory = session_factory or (lambda: requests.Session(impersonate='chrome'))
         self.app_factory = app_factory
         self.entry = entry
+        self.credential_cache = credential_cache
 
     @staticmethod
     def _json(response):
+        if response.status_code == 401:
+            raise CouponError('卡券会话已失效，请重新校验活动登录。','COUPON_LOGIN_REQUIRED',401)
         if response.status_code != 200:
             raise CouponError('卡券服务 HTTP '+str(response.status_code), 'UPSTREAM_HTTP')
         value = response.json()
@@ -144,93 +152,129 @@ class CouponClient:
             raise CouponError('卡券服务响应格式异常。', 'UPSTREAM_FORMAT')
         return value
 
+    def _authenticate(self,client,snapshot,current):
+        _, value, _ = self.app_factory(snapshot).call(APP_TOKEN_PATH,
+            {'sourceId': '019020', 'url': self.entry, 'cellNum': snapshot['phone']})
+        code = str(value.get('retCode'))
+        if code in ('400007', '420000'):
+            raise CouponError('APP 登录已过期，请在账号管理重新登录。', 'APP_LOGIN_REQUIRED', 401)
+        if code != '000000':
+            raise CouponError('APP 未返回卡券认证令牌，请校验共享账号后重试。', 'APP_TOKEN_FAILED')
+        body = value.get('rspBody')
+        if isinstance(body, str):
+            body = json.loads(body)
+        if not isinstance(body, dict) or not body.get('token'):
+            raise CouponError('APP 未返回卡券认证令牌，请校验共享账号后重试。', 'APP_TOKEN_FAILED')
+        current()
+        response = client.get(ORIGIN+'/i/v1/auth/getArtifact2', params={
+            'channelID': '12014', 'backUrl': self.entry, 'token': body['token'],
+        }, timeout=(10, 25), allow_redirects=False)
+        for _ in range(8):
+            if response.status_code not in (301, 302, 303, 307, 308):
+                break
+            url = urljoin(str(response.url), response.headers.get('location', ''))
+            parts = urlsplit(url)
+            if parts.scheme != 'https' or parts.netloc not in ('touch.10086.cn', 'login.10086.cn'):
+                raise CouponError('卡券认证返回了不支持的跳转地址。', 'SSO_REDIRECT')
+            response = client.get(url, timeout=(10, 25), allow_redirects=False)
+        if response.status_code != 200:
+            raise CouponError('卡券认证暂未完成，请稍后重试。', 'SSO_FAILED')
+        return {}
+
+    def _identity(self,client,phone):
+        data = _unpack(self._json(client.get(ORIGIN+'/i/v1/auth/loginfo',timeout=(10,20),allow_redirects=False)))
+        if str(data.get('userType')) == '2':
+            raise CouponError('卡券账号尚未登录，请校验共享账号后重试。','COUPON_LOGIN_REQUIRED',401)
+        login = str(data.get('loginValue') or '')
+        number = login.replace('******',str(data.get('safeCode') or ''))
+        if number != phone:
+            raise CouponError('卡券认证返回的账号不一致，本次已停止。','ACCOUNT_MISMATCH',409)
+        return {'number':number,'login_type':'0' if str(data.get('userType')) == '4' else '1',
+                'province':str(data.get('provice') or ''),'msg_id':data.get('msgId') or ''}
+
     @contextmanager
-    def _session(self):
+    def _session(self, *, recover_login=True):
         snapshot = self.credentials_provider()
         if (not isinstance(snapshot, dict) or not re.fullmatch(r'1[3-9]\d{9}', str(snapshot.get('phone', '')))
                 or not isinstance(snapshot.get('cookie'), str) or 'JSESSIONID=' not in snapshot['cookie']):
             raise CouponError('共享账号需要重新登录，请从左侧账号管理处理。', 'APP_LOGIN_REQUIRED', 401)
         def current():
             latest = self.credentials_provider()
-            if (latest is None or latest.get('cookie') != snapshot['cookie']
-                    or latest.get('phone') != snapshot['phone']):
-                raise CouponError('共享账号凭据已更新，请重新查询卡券。', 'APP_CREDENTIALS_CHANGED', 409)
+            if (latest is None or latest.get('phone') != snapshot['phone']
+                    or snapshot.get('id') and latest.get('id') != snapshot['id']):
+                raise CouponError('账号已退出或已切换，本次卡券查询已停止。', 'APP_CREDENTIALS_CHANGED', 409)
         client = self.session_factory()
-        client.headers.update({'User-Agent': APP_UA, 'Referer': self.entry, 'Origin': ORIGIN})
+        client.headers.update({'User-Agent':APP_UA,'Referer':self.entry,'Origin':ORIGIN})
+        def authenticate():
+            current()
+            return self._authenticate(client,self.credentials_provider(),current)
         try:
-            _, value, _ = self.app_factory(snapshot).call(APP_TOKEN_PATH,
-                {'sourceId': '019020', 'url': self.entry, 'cellNum': snapshot['phone']})
-            code = str(value.get('retCode'))
-            if code in ('400007', '420000'):
-                raise CouponError('APP 登录已过期，请在账号管理重新登录。', 'APP_LOGIN_REQUIRED', 401)
-            if code != '000000':
-                raise CouponError('APP 未返回卡券认证令牌，请校验共享账号后重试。', 'APP_TOKEN_FAILED')
-            body = value.get('rspBody')
-            if isinstance(body, str):
-                body = json.loads(body)
-            if not isinstance(body, dict) or not body.get('token'):
-                raise CouponError('APP 未返回卡券认证令牌，请校验共享账号后重试。', 'APP_TOKEN_FAILED')
-            current()
-            response = client.get(ORIGIN+'/i/v1/auth/getArtifact2', params={
-                'channelID': '12014', 'backUrl': self.entry, 'token': body['token'],
-            }, timeout=(10, 25), allow_redirects=False)
-            for _ in range(8):
-                if response.status_code not in (301, 302, 303, 307, 308):
+            if self.credential_cache is None:
+                authenticate()
+            else:
+                self.credential_cache.connect('coupon-wallet:12014',snapshot,client,authenticate)
+            # loginfo supplies a fresh flow-specific msgId. It must not be
+            # cached along with the reusable wallet login cookies.
+            for attempt in range(2):
+                try:
+                    identity = self._identity(client,snapshot['phone'])
                     break
-                url = urljoin(str(response.url), response.headers.get('location', ''))
-                parts = urlsplit(url)
-                if parts.scheme != 'https' or parts.netloc not in ('touch.10086.cn', 'login.10086.cn'):
-                    raise CouponError('卡券认证返回了不支持的跳转地址。', 'SSO_REDIRECT')
-                response = client.get(url, timeout=(10, 25), allow_redirects=False)
-            if response.status_code != 200:
-                raise CouponError('卡券认证暂未完成，请稍后重试。', 'SSO_FAILED')
-            data = _unpack(self._json(client.get(ORIGIN+'/i/v1/auth/loginfo', timeout=(10, 20), allow_redirects=False)))
-            login = str(data.get('loginValue') or '')
-            number = login.replace('******', str(data.get('safeCode') or ''))
-            if number != snapshot['phone']:
-                raise CouponError('卡券认证返回的账号不一致，本次已停止。', 'ACCOUNT_MISMATCH', 409)
-            user_type = str(data.get('userType'))
-            if user_type == '2':
-                raise CouponError('卡券账号尚未登录，请校验共享账号后重试。', 'COUPON_LOGIN_REQUIRED', 401)
-            identity = {'number': number, 'login_type': '0' if user_type == '4' else '1',
-                        'province': str(data.get('provice') or ''), 'msg_id': data.get('msgId') or ''}
+                except CouponError as error:
+                    if error.code != 'COUPON_LOGIN_REQUIRED' or not recover_login or self.credential_cache is None or attempt or not self.credential_cache.recover(client):raise
             current()
-            yield client, identity, current
+            yield client,identity,current
+        except CouponError as error:
+            if error.code == 'COUPON_LOGIN_REQUIRED' and self.credential_cache is not None and getattr(client,'_credential_binding',None):
+                self.credential_cache.invalidate(client)
+            raise
         except AppLoginError as error:
-            raise CouponError('APP 卡券认证失败，请校验共享账号后重试。', 'APP_TOKEN_FAILED') from error
+            raise CouponError('APP 卡券认证失败，请校验共享账号后重试。','APP_TOKEN_FAILED') from error
         except requests.RequestsError as error:
-            raise CouponError('连接卡券服务失败，请稍后重试。', 'UPSTREAM_NETWORK') from error
-        except (ValueError, TypeError, KeyError, InvalidTag) as error:
-            raise CouponError('卡券服务响应无法解析，请稍后重试。', 'UPSTREAM_FORMAT') from error
+            raise CouponError('连接卡券服务失败，请稍后重试。','UPSTREAM_NETWORK') from error
+        except (ValueError,TypeError,KeyError,InvalidTag) as error:
+            raise CouponError('卡券服务响应无法解析，请稍后重试。','UPSTREAM_FORMAT') from error
         finally:
             client.close()
 
-    def query(self, *, state='available', page=1, sort='default'):
-        with self._session() as (client, user, current):
-            number = user['number']
-            client.headers.update({'payPhoneNo': base64.b64encode(_cbc_encrypt(number).encode()).decode()+number[5:7],
-                                   'provcode': user['province'], 'Content-Type': 'application/json; charset=utf-8'})
-            queries = [dict(status='1,8,9,21', sortType=SORTS[sort])] if state == 'available' else [
-                dict(status=status, sortType=order, qryType=source, page=page-1)
-                for status, order in [('10', '3'), ('4,5,11,22', '4')] for source in ('0', '1')]
-            items, total, more = [], 0, False
-            for query in queries:
-                current()
-                body = {'loginNo': number, 'loginType': user['login_type'], 'channelId': '11',
-                        'provCode': user['province'], 'busiType': '', 'pcardPasswd': '', **query}
-                response = client.post(ORIGIN+'/i/v1/cust/pcardAndGiftQry/'+number,
-                    json=_payload(body, user['msg_id']), timeout=(10, 25), allow_redirects=False)
-                data = _unpack(self._json(response), gcm=True)
-                groups = data.get('busiData')
-                if not isinstance(groups, list):
-                    raise CouponError('官方未返回卡券列表，本次查询未完成。', 'LIST_MISSING')
-                rows = [row for group in groups for row in group.get('batchInfo', [])]
-                items.extend(_item(row) for row in rows)
-                count = data.get('totalNum')
-                total = total+int(count) if total is not None and count is not None else None
-                if state == 'history':
-                    pages = data.get('totlePage')
-                    more |= page < int(pages) if pages is not None else bool(rows)
-            current()
-            return {'items': list({item['id']: item for item in items}.values()), 'page': page,
-                    'total': total, 'has_more': more}
+    def query(self, *, state='available', page=1, sort='default', wallet_session=None, recover_login=True):
+        with (self._session(recover_login=recover_login) if wallet_session is None else nullcontext(wallet_session)) as (client, user, current):
+            for attempt in range(2):
+                try:
+                    number = user['number']
+                    client.headers.update({'payPhoneNo': base64.b64encode(_cbc_encrypt(number).encode()).decode()+number[5:7],
+                                           'provcode': user['province'], 'Content-Type': 'application/json; charset=utf-8'})
+                    queries = [dict(status='1,8,9,21', sortType=SORTS[sort])] if state == 'available' else [
+                        dict(status=status, sortType=order, qryType=source, page=page-1)
+                        for status, order in [('10', '3'), ('4,5,11,22', '4')] for source in ('0', '1')]
+                    items, total, more = [], 0, False
+                    for query in queries:
+                        current()
+                        body = {'loginNo': number, 'loginType': user['login_type'], 'channelId': '11',
+                                'provCode': user['province'], 'busiType': '', 'pcardPasswd': '', **query}
+                        response = client.post(ORIGIN+'/i/v1/cust/pcardAndGiftQry/'+number,
+                            json=_payload(body, user['msg_id']), timeout=(10, 25), allow_redirects=False)
+                        data = _unpack(self._json(response), gcm=True)
+                        groups = data.get('busiData')
+                        if not isinstance(groups, list):
+                            raise CouponError('官方未返回卡券列表，本次查询未完成。', 'LIST_MISSING')
+                        rows = [row for group in groups for row in group.get('batchInfo', [])]
+                        items.extend(_item(row) for row in rows)
+                        count = data.get('totalNum')
+                        total = total+int(count) if total is not None and count is not None else None
+                        if state == 'history':
+                            pages = data.get('totlePage')
+                            more |= page < int(pages) if pages is not None else bool(rows)
+                    current()
+                    return {'items': list({item['id']: item for item in items}.values()), 'page': page,
+                            'total': total, 'has_more': more}
+                except CouponError as error:
+                    if error.code != 'COUPON_LOGIN_REQUIRED' or self.credential_cache is None or not getattr(client,'_credential_binding',None):
+                        raise
+                    if wallet_session is None and recover_login and not attempt and self.credential_cache.recover(client):
+                        # Re-authentication also replaces the flow-specific msgId.
+                        # Never replay a query encrypted with the old wallet's msgId.
+                        current()
+                        user = self._identity(client,number)
+                        continue
+                    self.credential_cache.invalidate(client)
+                    raise

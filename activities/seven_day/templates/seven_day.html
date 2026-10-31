@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>7日打卡分百万 · 本地工具台</title><link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/activities/seven-day/static/seven-day.css">
+  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/activities/seven-day/static/seven-day.js" defer></script>
+</head>
+<body class="workspace-app" data-workspace="seven-day">
+<main class="portal-shell seven-shell">
+  <section class="seven-heading">
+    <div><div class="seven-heading-label"><span class="seven-limited">限时活动</span><span id="seven-period">正在读取活动时间…</span></div><h1>7日打卡分百万</h1><p>连续打卡领 5 元红包，每天零点自动参与夺宝。</p></div>
+    <div class="seven-heading-actions"><button id="seven-refresh" class="secondary" type="button">刷新</button><button id="seven-configure" class="primary" type="button" disabled>自动设置</button></div>
+  </section>
+  <p id="seven-warning" class="seven-notice" role="status" hidden></p>
+  <p id="seven-feedback" class="seven-feedback" role="status" hidden></p>
+  <section id="seven-ended" class="seven-ended" hidden><h2>活动已结束</h2><p>自动任务已停止，活动入口将从导航移除。已领取的奖品可在“我的卡券”查看。</p><a href="/coupons">查看我的卡券 →</a></section>
+  <section class="seven-panel" aria-label="7日打卡账号情况">
+    <div class="seven-toolbar"><div><h2>共享账号 <span id="seven-total">—</span></h2><p id="seven-summary">正在读取各账号进度…</p></div><div class="seven-filters"><select id="seven-filter" aria-label="筛选七日活动状态"><option value="all">全部账号</option><option value="signin">今日待打卡</option><option value="claim">红包待领取</option><option value="draw">今日待夺宝</option><option value="attention">需要处理</option></select><input id="seven-search" type="search" placeholder="搜索账号或号码尾号" aria-label="搜索七日活动账号" autocomplete="off"></div></div>
+    <div class="seven-automation-summary"><span id="seven-auto-summary">所有有效账号自动参与，新增或恢复登录后自动纳入。</span><span class="seven-business-time">北京时间</span></div>
+    <div class="seven-table-wrap"><table class="seven-table" aria-label="每日打卡与夺宝进度"><colgroup><col class="seven-col-account"><col class="seven-col-signin"><col class="seven-col-progress"><col class="seven-col-reward"><col class="seven-col-draw"><col class="seven-col-recent"><col class="seven-col-actions"></colgroup><thead><tr><th scope="col">共享账号</th><th scope="col">今日打卡</th><th scope="col">连续进度</th><th scope="col">5 元话费红包</th><th scope="col">天天来夺宝</th><th scope="col">最近结果 · 北京时间</th><th scope="col">操作</th></tr></thead><tbody id="seven-accounts"><tr><td class="seven-empty" colspan="7">正在读取各账号进度…</td></tr></tbody></table></div>
+    <div class="seven-panel-footer"><span id="seven-sync">北京时间 · 自动刷新</span><span>每日任务默认覆盖全部有效账号</span></div>
+  </section>
+  <details class="seven-rules"><summary>活动规则与领取说明</summary><div class="seven-rules-body"><p>每个号码仅可完成一轮连续 7 天打卡并领取一次红包，跨月正常累计；漏打会清零，不能补打。第 7 天完成后，需通过官方短信验证领取 5 元话费券。</p><p>夺宝每天一次，次日 00:00 刷新，不保证中奖。领取后的券通常在 24 小时内到账，有效期 7 天；红包库存耗尽时，打卡与夺宝一同结束。</p><p id="seven-expiry-note">入口与自动任务跟随官方页面的实际下线时间。</p><details id="seven-official-rules" hidden><summary>查看官方完整规则</summary><p id="seven-rules-text"></p></details></div></details>
+  <p class="seven-footnote">每日设置时间是开始时间；程序晚启动、账号恢复登录后，会核对官方进度并补做当天未完成的任务。</p>
+</main>
+<dialog id="seven-settings" aria-labelledby="seven-settings-title"><form id="seven-settings-form">
+  <div class="seven-dialog-heading"><div><h2 id="seven-settings-title">自动执行设置</h2><p>应用于所有有效账号，无需逐个选择。</p></div><button class="close quiet" type="button" data-seven-close="settings" aria-label="关闭自动设置">×</button></div>
+  <label class="seven-toggle"><span><strong>每日连续打卡</strong><small>核对官方记录，今天已完成的不会重复提交。</small></span><input id="seven-signin-enabled" type="checkbox" checked role="switch"></label>
+  <div id="seven-signin-time-field" class="seven-field"><label for="seven-signin-time">每日开始时间 <small>北京时间</small></label><input id="seven-signin-time" type="time" value="00:01" required></div>
+  <label class="seven-toggle seven-draw-toggle"><span><strong>天天来夺宝</strong><small>每天 00:00 开始，官方每天仅一次抽奖机会。</small></span><input id="seven-draw-enabled" type="checkbox" checked role="switch"></label>
+  <div id="seven-burst-fields" class="seven-form-grid"><div class="seven-field"><label for="seven-burst-count">单轮夺宝尝试次数</label><input id="seven-burst-count" type="number" min="1" max="40" step="1" value="5" required></div><div class="seven-field"><label for="seven-burst-interval">夺宝尝试间隔 <small>秒</small></label><input id="seven-burst-interval" type="number" min="0.05" max="5" step="0.05" value="0.2" required></div></div>
+  <p class="seven-settings-note">账号之间并行执行，单个账号依次尝试。官方确认已抽奖后立即停止；请求结果不确定时先查询，不会重复消耗机会。第 7 天的红包会在表格中提示领取，输入官方短信验证码后完成。</p>
+  <div class="seven-form-grid"><div class="seven-field"><label for="seven-retry-interval">失败重试间隔 <small>分钟</small></label><input id="seven-retry-interval" type="number" min="1" max="1440" step="1" value="5" required></div><div class="seven-field"><label for="seven-max-attempts">每日失败尝试上限 <small>含首次失败</small></label><input id="seven-max-attempts" type="number" min="1" max="100" step="1" value="5" required></div></div>
+  <p class="seven-settings-note">临时失败默认间隔 5 分钟，每个账号每天最多失败 5 次，达到上限后当日停止。资格未通过的账号每天只检查一次；刷新、重启、账号凭据维护或保存设置不会清零次数。手动查询不受自动重试次数限制。</p>
+  <p id="seven-settings-error" class="seven-dialog-error" role="alert" hidden></p><div class="seven-dialog-actions"><button class="secondary" type="button" data-seven-close="settings">取消</button><button id="seven-settings-save" class="primary" type="submit">保存设置</button></div>
+</form></dialog>
+<dialog id="seven-claim" aria-labelledby="seven-claim-title"><form id="seven-claim-form">
+  <div class="seven-dialog-heading"><div><span class="seven-dialog-eyebrow">连续 7 天打卡奖励</span><h2 id="seven-claim-title">领取 5 元话费红包</h2></div><button class="close quiet" type="button" data-seven-close="claim" aria-label="关闭红包领取">×</button></div>
+  <div class="seven-claim-account"><span>使用账号</span><strong id="seven-claim-account"></strong></div>
+  <label class="seven-code-label" for="seven-code">短信验证码</label><div class="seven-code-row"><input id="seven-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="输入 6 位验证码" required><button id="seven-send-code" class="secondary" type="button">获取验证码</button></div>
+  <p id="seven-sms-status" class="seven-sms-status" role="status">正在自动获取验证码…</p><p class="seven-settings-note">领取后话费券通常在 24 小时内到账，有效期 7 天。请在“我的卡券”及时使用。</p><p id="seven-claim-error" class="seven-dialog-error" role="alert" hidden></p>
+  <div class="seven-dialog-actions"><button class="secondary" type="button" data-seven-close="claim">取消</button><button id="seven-claim-submit" class="primary" type="submit">确认领取</button></div>
+</form></dialog>
+<div id="seven-toast" class="seven-toast" role="status" hidden><span class="seven-toast-check" aria-hidden="true">✓</span><span id="seven-toast-text"></span></div>
+</body>
+</html>

@@ -166,6 +166,22 @@ class RecoveryIntegrationTests(unittest.TestCase):
         client.connect_app.assert_called_once_with(self.saved.cookie,self.saved.phone,{})
         client.app_login.send_sms.assert_not_called(); client.app_login.login.assert_not_called(); client.claim.assert_not_called()
 
+    def test_wednesday_preparation_holds_primary_cookie_stable_until_the_round_finishes(self):
+        self.scheduler.workers['default']=object()
+        try:
+            self.assertFalse(self.app.extensions['session_maintenance'].check(self.saved))
+            self.renewal.assert_not_called()
+        finally:
+            self.scheduler.workers.clear()
+
+    @patch('app.verify_token')
+    def test_automatic_wednesday_activity_is_prepared_by_its_worker_not_other_business_maintenance(self, verify):
+        self.scheduler.sync_automatic()
+        client=self.manager.get().client
+        client.connect_app.reset_mock();client.identity.reset_mock()
+        self.app.extensions['session_maintenance'].tick()
+        client.connect_app.assert_not_called();client.identity.assert_not_called()
+
     @patch('app.exchange_cookie',return_value='renewed-token')
     @patch('app.verify_token',side_effect=[LingxiError('expired',authentication=True),None])
     def test_expired_lingxi_token_is_exchanged_from_same_app_cookie_and_saved(self, verify, exchange):
@@ -185,6 +201,7 @@ class RecoveryIntegrationTests(unittest.TestCase):
 
     @patch('app.verify_token')
     def test_wallet_remains_usable_while_lingxi_is_reconnecting(self, verify):
+        self.saved.token = ''  # A valid independent Lingxi token is now reused.
         def rotated(flow):
             flow.cookie = 'JSESSIONID=newly-refreshed-cookie'
             flow.refreshed_at = time.time()

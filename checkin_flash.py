@@ -10,7 +10,8 @@ PREPARE_SECONDS = 30
 FOLLOWUP_SECONDS = 10
 
 
-def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_seconds=FOLLOWUP_SECONDS):
+def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_seconds=FOLLOWUP_SECONDS,
+                    result_key='flash', stop_on_result=True, planned_offsets=None):
     """Queue by planned time, independently of earlier request completion.
 
     Each worker leases one prepared HTTP session. Queued calls are cancelled
@@ -18,11 +19,12 @@ def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_se
     """
     if not prepared.ready:
         return {**prepared.result, 'state': 'skipped', 'submitted': False,
-                'message': prepared.result['flash_message'], 'attempt_count': 0, 'attempts': []}
+                'message': prepared.result[result_key+'_message'], 'attempt_count': 0, 'attempts': []}
     count, interval, workers = (settings[k] for k in ('burst_count', 'burst_interval', 'burst_workers'))
     start, end = prepared.start_monotonic, prepared.end_monotonic
-    times = [start + i * interval for i in range(count)]
-    times.append(times[-1] + followup_seconds)
+    times = [start + offset for offset in planned_offsets] if planned_offsets is not None else [start + i * interval for i in range(count)]
+    if followup_seconds is not None:
+        times.append(times[-1] + followup_seconds)
     halt, guard = Event(), Lock()
     records, pending = [], set()
     sent = 0
@@ -31,7 +33,8 @@ def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_se
         nonlocal sent
         if halt.is_set() or cancelled() or time.monotonic() >= end:
             return
-        record = {'index': index + 1, 'followup': index == count, 'sent_at': None}
+        record = {'index': index + 1, 'followup': index == count, 'sent_at': None,
+                  'planned_offset_ms':round((times[index]-start)*1000)}
         def entering():
             nonlocal sent
             if halt.is_set() or cancelled() or time.monotonic() >= end:
@@ -49,7 +52,7 @@ def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_se
         with guard:
             if record['sent_at'] is not None or outcome.get('code') != 'BURST_STOPPED':
                 records.append(record)
-            if outcome['state'] != 'retryable':
+            if stop_on_result and outcome['state'] != 'retryable':
                 halt.set()
         return outcome
 
@@ -95,13 +98,13 @@ def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_se
     if winner is None and needs_check:
         try:
             result = prepared.reconcile()
-            if result['flash_state'] == 'already_claimed':
+            if result[result_key+'_state'] == 'already_claimed':
                 winner = {'message': '官方状态确认本月已领取'}
         except CheckinError:
             pass
     if winner:
         state, message = 'success', winner['message']
-        result = {**result, 'flash_state': 'already_claimed'}
+        result = {**result, result_key+'_state': 'already_claimed'}
     elif uncertain:
         state, message = 'failed', '领取结果待核实，已停止剩余请求，本轮不会重发'
     elif cancelled():
@@ -113,5 +116,6 @@ def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_se
     else:
         state, message = 'skipped', '场次已结束，本轮没有发送请求'
     message = f'已发起 {sent} 次 · '+message
-    return {**result, 'state': state, 'message': message, 'flash_message': message,
-            'submitted': bool(sent), 'attempt_count': sent, 'attempts': records}
+    return {**result, 'state': state, 'message': message, result_key+'_message': message,
+            'submitted': bool(sent), 'uncertain': uncertain and winner is None,
+            'attempt_count': sent, 'attempts': records}

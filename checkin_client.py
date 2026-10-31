@@ -77,8 +77,9 @@ def _in_window(zone, now):
 
 
 class CheckinClient:
-    def __init__(self, credentials_provider, *, session_factory=None, worker_session_factory=None):
+    def __init__(self, credentials_provider, *, session_factory=None, worker_session_factory=None, credential_cache=None):
         self.credentials_provider = credentials_provider
+        self.credential_cache = credential_cache
         self.session_factory = session_factory or (lambda: requests.Session(impersonate='chrome'))
         # A leased session is used by one worker at a time, so its warm curl
         # connection can move between pool threads without sharing a handle.
@@ -95,9 +96,8 @@ class CheckinClient:
 
     def _current(self, snapshot):
         latest = self.credentials_provider()
-        if (latest is None or latest.get('cookie') != snapshot['cookie']
-                or latest.get('phone') != snapshot['phone']
-                or latest.get('credential_revision') != snapshot.get('credential_revision')):
+        if (latest is None or latest.get('phone') != snapshot['phone']
+                or self.credential_cache is None and latest.get('cookie') != snapshot['cookie']):
             raise CheckinError('共享账号凭据已更新，请重试以使用最新登录态', 'APP_CREDENTIALS_CHANGED', 409)
 
     @staticmethod
@@ -129,67 +129,77 @@ class CheckinClient:
         except requests.RequestsError as error:
             raise CheckinError('请求中断，结果待核实；本次没有自动重发' if writing else '连接签到服务失败，请稍后重试',
                                'RESULT_UNCERTAIN' if writing else 'UPSTREAM_NETWORK', uncertain=writing) from error
-        if response.status_code != 200:
+        if response.status_code not in (200,401):
             raise CheckinError('签到服务 HTTP '+str(response.status_code), 'UPSTREAM_HTTP', uncertain=writing)
         try:
-            value = response.json()
+            value = {'code':'GOTO_LOGIN'} if response.status_code == 401 else response.json()
         except ValueError as error:
             raise CheckinError('官方响应格式异常，请在 APP 核实', 'UPSTREAM_FORMAT', uncertain=writing) from error
         if not isinstance(value, dict):
             raise CheckinError('官方响应格式异常，请在 APP 核实', 'UPSTREAM_FORMAT', uncertain=writing)
         code = str(value.get('status') or value.get('code') or '')
         if value.get('code') == 'GOTO_LOGIN':
+            if self.credential_cache is not None and getattr(client,'_credential_binding',None):
+                if not writing and self.credential_cache.recover(client):
+                    return self._post(client,path,body,snapshot=snapshot)
+                self.credential_cache.invalidate(client)
             raise CheckinError('签到活动会话尚未恢复，请校验并重连账号', 'ACTIVITY_LOGIN_REQUIRED', 401)
         if re.search('CAPTCHA|VERIFY|RISK|CHECK_CODE', code, re.I):
             raise CheckinError('官方要求验证，请在 APP 完成验证后重试', 'VERIFICATION_REQUIRED', 409, uncertain=writing)
         return value
 
+    def _authenticate(self, client, snapshot):
+        page = self._follow(client, ENTRY)
+        match = re.search(r"var\s+loginPath\s*=\s*['\"]([^'\"]+)['\"]", page.text)
+        if not match or not match[1].startswith('/appTokenLogin?sid='):
+            raise CheckinError('签到活动未返回 APP 登录入口', 'APP_SSO_ENTRY')
+        self._current(snapshot)
+        profile = snapshot['profile']
+        response = client.post(_official_url('/qwhdsso'+match[1]), json={
+            'jwtToken': None, 'token': snapshot['cookie'],
+            'provinceCode': str(profile.get('provinceCode', '')),
+            'cityCode': str(profile.get('cityCode', '')),
+            'userCheckId': format(int(snapshot['phone']), 'x'),
+            'carrierOperator': str(profile.get('carrierOperator') or '002'),
+            'appVersionCode': '12.5.6', 'took': 0,
+        }, timeout=(10, 25), allow_redirects=False)
+        if response.status_code != 200:
+            raise CheckinError('APP 活动认证 HTTP '+str(response.status_code), 'APP_SSO_HTTP')
+        payload = _data(response.json())
+        if not isinstance(payload, dict) or not isinstance(payload.get('url'), str):
+            raise CheckinError('APP 活动认证响应格式无效', 'APP_SSO_FORMAT')
+        self._follow(client, payload['url'])
+        identity = _data(self._post(client, 'user/info', {'appVersion': '12.5.6', 'miniVersion': ''}))
+        if not isinstance(identity, dict):
+            raise CheckinError('签到活动身份响应格式无效', 'UPSTREAM_FORMAT')
+        # The current H5 keeps `mobile` opaque and renders nickName as the
+        # masked phone. Retain a phone check alongside the fresh SSO token
+        # and userCheckId binding instead of comparing that opaque value.
+        mobile = str(identity.get('mobile') or '')
+        masked = snapshot['phone'][:3]+'****'+snapshot['phone'][-4:]
+        same_phone = (mobile == snapshot['phone'] if re.fullmatch(r'1[3-9]\d{9}', mobile)
+                      else bool(mobile) and identity.get('nickName') == masked)
+        if not same_phone or identity.get('channel') != 'app':
+            raise CheckinError('签到活动返回的账号或渠道不一致', 'ACCOUNT_MISMATCH', 409)
+        self._current(snapshot)
+        return identity
+
     @contextmanager
     def _session(self):
         snapshot = self._snapshot()
         client = self.session_factory()
-        # qwhdsso distinguishes page navigation from an API request. Sending
-        # login-check on ENTRY returns GOTO_LOGIN JSON instead of its login HTML.
-        client.headers.update({'User-Agent': APP_UA, 'Origin': 'https://wx.10086.cn', 'Referer': ENTRY})
+        client.headers.update({'User-Agent':APP_UA,'Origin':'https://wx.10086.cn','Referer':ENTRY})
         try:
-            page = self._follow(client, ENTRY)
-            match = re.search(r"var\s+loginPath\s*=\s*['\"]([^'\"]+)['\"]", page.text)
-            if not match or not match[1].startswith('/appTokenLogin?sid='):
-                raise CheckinError('签到活动未返回 APP 登录入口', 'APP_SSO_ENTRY')
-            self._current(snapshot)
-            profile = snapshot['profile']
-            response = client.post(_official_url('/qwhdsso'+match[1]), json={
-                'jwtToken': None, 'token': snapshot['cookie'],
-                'provinceCode': str(profile.get('provinceCode', '')),
-                'cityCode': str(profile.get('cityCode', '')),
-                'userCheckId': format(int(snapshot['phone']), 'x'),
-                'carrierOperator': str(profile.get('carrierOperator') or '002'),
-                'appVersionCode': '12.5.6', 'took': 0,
-            }, timeout=(10, 25), allow_redirects=False)
-            if response.status_code != 200:
-                raise CheckinError('APP 活动认证 HTTP '+str(response.status_code), 'APP_SSO_HTTP')
-            payload = _data(response.json())
-            if not isinstance(payload, dict) or not isinstance(payload.get('url'), str):
-                raise CheckinError('APP 活动认证响应格式无效', 'APP_SSO_FORMAT')
-            self._follow(client, payload['url'])
-            identity = _data(self._post(client, 'user/info', {'appVersion': '12.5.6', 'miniVersion': ''}))
-            if not isinstance(identity, dict):
-                raise CheckinError('签到活动身份响应格式无效', 'UPSTREAM_FORMAT')
-            # The current H5 keeps `mobile` opaque and renders nickName as the
-            # masked phone. Retain a phone check alongside the fresh SSO token
-            # and userCheckId binding instead of comparing that opaque value.
-            mobile = str(identity.get('mobile') or '')
-            masked = snapshot['phone'][:3]+'****'+snapshot['phone'][-4:]
-            same_phone = (mobile == snapshot['phone'] if re.fullmatch(r'1[3-9]\d{9}', mobile)
-                          else bool(mobile) and identity.get('nickName') == masked)
-            if not same_phone or identity.get('channel') != 'app':
-                raise CheckinError('签到活动返回的账号或渠道不一致', 'ACCOUNT_MISMATCH', 409)
-            self._current(snapshot)
-            yield client, snapshot
+            if self.credential_cache is None:
+                self._authenticate(client,snapshot)
+            else:
+                self.credential_cache.connect('qwhdmark:1021122301',snapshot,client,
+                    lambda:self._authenticate(client,snapshot))
+            yield client,snapshot
         except requests.RequestsError as error:
-            raise CheckinError('连接 APP 活动认证服务失败，请稍后重试', 'UPSTREAM_NETWORK') from error
-        except (ValueError, TypeError, KeyError) as error:
-            raise CheckinError('签到活动响应格式无效，请稍后重试', 'UPSTREAM_FORMAT') from error
+            raise CheckinError('连接 APP 活动认证服务失败，请稍后重试','UPSTREAM_NETWORK') from error
+        except (ValueError,TypeError,KeyError) as error:
+            raise CheckinError('签到活动响应格式无效，请稍后重试','UPSTREAM_FORMAT') from error
         finally:
             client.close()
 

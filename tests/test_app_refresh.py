@@ -49,6 +49,20 @@ class RefreshProtocolTests(unittest.TestCase):
         self.assertEqual(rebuilt.refresh_token,'new-refresh')
         self.assertEqual(rebuilt.validity_term,123456)
 
+    def test_campaign_identity_can_be_renewed_after_successful_keepalive_without_sms(self):
+        flow=self.flow(refresh_token='existing-refresh')
+        def response(path,body):
+            if path==REFRESH_PATH:return 200,{'retCode':'000000'},{}
+            self.assertEqual(path,AUTH_REFRESH_PATH)
+            self.assertEqual(body['sendSmsFlag'],'0')
+            self.assertEqual(body['refreshToken'],'existing-refresh')
+            return 200,{'retCode':'000000','rspBody':{'cookie':'JSESSIONID=new; UID=fresh-uid','refreshToken':'next-refresh'}},{}
+        flow.call=Mock(side_effect=response)
+        flow.refresh(force_identity=True)
+        self.assertEqual(flow.call.call_count,2)
+        self.assertIn('UID=fresh-uid',flow.cookie)
+        self.assertEqual(flow.refresh_token,'next-refresh')
+
     def test_missing_legacy_token_after_confirmed_timeout_does_not_send_sms(self):
         flow=self.flow();flow.call=Mock(return_value=(200,{'retCode':'410000'},{}))
         with self.assertRaises(AppCredentialError) as error:flow.refresh()
@@ -122,7 +136,8 @@ class SharedRefreshTests(unittest.TestCase):
         self.assertEqual(result.status_code,200)
         self.assertEqual(logged.session_id,conversation)
         self.assertEqual(logged.app_cookie,'JSESSIONID=new')
-        self.assertEqual(logged.auth_code,'new-token')
+        self.assertEqual(logged.auth_code,'old-token')
+        exchange.assert_not_called()
         self.client.connect_app.assert_called_once_with('JSESSIONID=new',self.saved.phone,{})
         self.assertEqual(self.client.app_credentials_provider()['cookie'],'JSESSIONID=new')
         self.assertEqual(self.saved.app_context['refreshToken'],'new-refresh')
@@ -155,6 +170,29 @@ class SharedRefreshTests(unittest.TestCase):
         maintenance.tick();maintenance.tick();self.assertEqual(check.call_count,1)
         self.pool.rotate_credentials(self.saved.phone,expected_revision=1,cookie='JSESSIONID=new')
         maintenance.tick();self.assertEqual(check.call_count,2)
+
+    def test_metadata_revision_does_not_bypass_maintenance_backoff(self):
+        check=Mock(return_value=False)
+        now=[0];maintenance=SessionMaintenance(self.pool,check,now=lambda:now[0])
+        maintenance.tick()
+        self.pool.rotate_credentials(self.saved.phone,expected_revision=1,cookie=self.saved.cookie,
+                                     app_context={'refreshed_at':12345})
+        maintenance.tick()
+        self.assertEqual(check.call_count,1)
+        now[0]=60;maintenance.tick()
+        self.assertEqual(check.call_count,2)
+
+    @patch('app.verify_token')
+    @patch('app.exchange_cookie')
+    @patch('app.AppLoginSession.refresh')
+    def test_scheduled_preparations_reuse_verified_token_after_primary_rotation(self,refresh,exchange,verify):
+        prepare=self.app.extensions['lingxi_scheduler'].prepare
+        prepare(self.saved.id)
+        self.pool.rotate_credentials(self.saved.phone,expected_revision=self.saved.credential_revision,
+                                     cookie='JSESSIONID=updated')
+        for _ in range(5):prepare(self.saved.id)
+        verify.assert_called_once_with('old-token')
+        exchange.assert_not_called();refresh.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

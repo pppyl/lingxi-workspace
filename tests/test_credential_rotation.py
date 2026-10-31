@@ -57,11 +57,11 @@ class CredentialRotationTests(unittest.TestCase):
         self.assertEqual(restored.credential_revision, 1)
         self.assertEqual(restored.app_context, {})
 
-    def test_cookie_rotation_is_cas_and_invalidates_only_old_business_token(self):
+    def test_cookie_rotation_is_cas_and_preserves_independent_business_token(self):
         result = self.pool.rotate_credentials(self.saved.phone, expected_revision=1,
             cookie='JSESSIONID=updated', app_context={'xk':'new-xk'})
         self.assertIs(result, self.saved)
-        self.assertEqual(result.token, '')
+        self.assertEqual(result.token, 'first-unit-token')
         self.assertEqual(result.profile, {'provinceCode':'100'})
         self.assertEqual(result.app_context, {'device_id':'unit-device','xk':'new-xk'})
         self.assertEqual(result.status, 'active')
@@ -165,7 +165,7 @@ class ActivityProviderTests(unittest.TestCase):
         self.client.call=Mock(return_value={'code':'GOTO_LOGIN'})
         with self.assertRaises(ActivityError):self.client.read('queryDrawPrizeInfo')
         self.client.connect_app.assert_called_once_with(cookie='JSESSIONID=new',phone=self.saved.phone,profile={})
-        self.client.call.assert_called_once()
+        self.assertEqual(self.client.call.call_count,2)
 
     def test_missing_central_record_never_falls_back_to_old_copy(self):
         self.pool.forget(self.saved.phone)

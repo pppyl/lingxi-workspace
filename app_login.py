@@ -237,7 +237,7 @@ class AppLoginSession:
         self.initialized_at = time.monotonic()
         return value
 
-    def refresh(self):
+    def refresh(self, *, force_identity=False):
         """APP 90000 keepalive, then bounded token auth after server timeout.
 
         No OTP endpoint is called. Provider business errors remain retryable;
@@ -249,9 +249,10 @@ class AppLoginSession:
             self.initialize()
         _, value, _ = self.call(REFRESH_PATH, {'cellNum':self.phone})
         code = str(value.get('retCode','unknown'))
-        if code == '410000':
+        if code == '410000' or force_identity and code == '000000':
             if not self.refresh_token:
-                raise AppCredentialError('旧 APP 会话已超时，且旧版记录缺少续期凭据，请重新验证一次。', code=code, login_required=True)
+                message = '账号缺少身份续期凭据，请重新验证一次。' if force_identity and code == '000000' else '旧 APP 会话已超时，且旧版记录缺少续期凭据，请重新验证一次。'
+                raise AppCredentialError(message, code=code, login_required=True)
             _, value, _ = self.call(AUTH_REFRESH_PATH, {
                 'cellNum':encrypt_phone(self.phone), 'imei':'', 'devToken':'', 'sendSmsFlag':'0',
                 'loginType':'80028' if 'sessiontype=' in self.cookie.lower() else '60028',

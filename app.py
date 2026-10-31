@@ -19,15 +19,22 @@ from login_storage import DatabaseLoginStorage, LoginStorageError
 from session_maintenance import SessionMaintenance
 from recharge.cmcc import ActivityError
 from lingxi_scheduler import LingxiScheduler, TaskError
-from checkin_client import CheckinError
+from checkin_client import CheckinError, CheckinClient
 from checkin_scheduler import CheckinScheduler, CheckinTaskError
 from monthly_coupon_auth import MonthlyCouponAuthError
 from monthly_coupon_client import MonthlyCouponClient
 from monthly_coupon_scheduler import MonthlyCouponScheduler, MonthlyTaskError
-from coupon_client import CouponClient, CouponError, SORTS as COUPON_SORTS
+from star_day_client import StarDayError
+from star_day_auth import StarDayAuthError
+from star_day_scheduler import StarDayScheduler
+from credential_cache import CredentialCache
+from platform_manager import PlatformManager
+import activities
+from coupon_client import CouponError, SORTS as COUPON_SORTS
 from coupon_use import CouponUseManager
 from coupon_captcha import register_coupon_captcha
 from runtime_paths import DATA_DIR,RECHARGE_DATA_DIR
+from network_access import allowed_lan_host
 
 
 def create_app(*, enable_recharge=False, recharge_manager=None, recharge_scheduler=None, database_path=None, recharge_data_dir=None):
@@ -43,8 +50,11 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     accounts_lock = RLock()
     chat_states: dict[tuple[str, str], Account] = {}
     management_locks = {}
+    lingxi_auth_locks = {}
     login_flows: dict[str, AppLoginSession] = {}
     database = DatabaseLoginStorage(database_path) if database_path is not None else None
+    credential_cache = CredentialCache(database)
+    app.extensions['credential_cache'] = credential_cache
     unified = UnifiedLogins(database)
     app.extensions["lingxi_accounts"] = accounts
     app.extensions['unified_logins'] = unified
@@ -57,7 +67,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             saved = unified.get_id(login_id)
             if saved is not None and saved.status == 'login_required':
                 raise ActivityError('APP 会话需要重新验证，请打开账号管理','APP_LOGIN_REQUIRED',401)
-            return unified.credentials(login_id)
+            value = unified.credentials(login_id)
+            return {**value,'id':login_id} if value is not None else None
 
     def all_chat_accounts():
         with accounts_lock:
@@ -117,47 +128,60 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             app.extensions['session_maintenance'].due.pop(saved.id,None)
 
     def ensure_token(saved, *, refresh=False):
-        # Ordinary business use also maintains the primary APP session. Legacy
-        # records are migrated by the background/manual checker, not by an OTP.
-        if refresh or saved.app_context:
+        # Only APP renewal needs the shared phone lock. Slow Lingxi verification
+        # uses its own lock so wallet/OTP operations remain independent.
+        if refresh or saved.app_context.get('device_id'):
             refresh_app_credentials(saved,force=refresh)
+        with accounts_lock:
+            token_lock = lingxi_auth_locks.setdefault(saved.id,RLock())
         for attempt in range(2):
-            snapshot = unified.credentials(saved.id)
-            if snapshot is None:
-                raise AppCredentialError('账号已退出。',login_required=True)
-            revision = snapshot['credential_revision']
-            with unified.lock:
-                token = saved.token
-            try:
-                if not token:
-                    token = exchange_cookie(snapshot['cookie'])
-                    verify_token(token)
-                else:
-                    try:
-                        verify_token(token)
-                    except LingxiError as exc:
-                        if not exc.authentication:
-                            raise
+            retry = False
+            with token_lock:
+                snapshot = unified.credentials(saved.id)
+                if snapshot is None:
+                    raise AppCredentialError('账号已退出。',login_required=True)
+                revision = snapshot['credential_revision']
+                with unified.lock:
+                    token = saved.token
+                try:
+                    if not token:
                         token = exchange_cookie(snapshot['cookie'])
                         verify_token(token)
-            except LingxiError as exc:
-                if exc.authentication and attempt == 0 and not refresh:
-                    refresh_app_credentials(saved,force=True)
-                    continue
-                unified.mark(saved,'active','灵犀会话将在使用时重连，其他功能可继续使用',expected_revision=revision)
-                raise
-            with unified.lock:
-                if unified.get(saved.phone) is not saved:
-                    raise AppCredentialError('账号已退出。',login_required=True)
-                if saved.credential_revision != revision:
-                    continue
-                changed = saved.token != token
-                saved.token = token
-                unified.mark(saved,'active','APP 会话已维护，业务使用最新凭据',expected_revision=revision)
-                if changed:
-                    unified.save()
-            sync_chat_credentials(saved)
-            return
+                        verified_at = time.time()
+                    elif refresh or time.time()-saved.app_context.get('lingxi_verified_at',0) >= 600:
+                        try:
+                            verify_token(token)
+                        except LingxiError as exc:
+                            if not exc.authentication:
+                                raise
+                            token = exchange_cookie(snapshot['cookie'])
+                            verify_token(token)
+                        verified_at = time.time()
+                    else:
+                        verified_at = saved.app_context.get('lingxi_verified_at',0)
+                except LingxiError as exc:
+                    if exc.authentication and attempt == 0 and not refresh:
+                        retry = True
+                    else:
+                        unified.mark(saved,'active','灵犀会话将在使用时重连，其他功能可继续使用',expected_revision=revision)
+                        raise
+                if not retry:
+                    with unified.lock:
+                        if unified.get(saved.phone) is not saved:
+                            raise AppCredentialError('账号已退出。',login_required=True)
+                        if saved.credential_revision != revision:
+                            continue
+                        changed = saved.token != token
+                        saved.token = token
+                        changed = changed or saved.app_context.get('lingxi_verified_at') != verified_at
+                        saved.app_context['lingxi_verified_at'] = verified_at
+                        unified.mark(saved,'active','APP 会话已维护，业务使用最新凭据',expected_revision=revision)
+                        if changed:
+                            unified.save()
+                    sync_chat_credentials(saved)
+                    return
+            if retry:
+                refresh_app_credentials(saved,force=True)
         raise AppCredentialError('账号凭据更新中，请稍后重试。')
 
     def reuse_login(current, saved, activate=True):
@@ -188,10 +212,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             return accounts[sid]
 
     @app.before_request
-    def local_only():
-        # Loopback binding plus Host/Origin validation keeps this local tool local.
-        if request.host.split(":")[0] not in ("127.0.0.1", "localhost", "[::1]"):
-            return jsonify(error="仅支持从本机访问。"), 403
+    def local_network_access():
+        if not allowed_lan_host(request.host):
+            return jsonify(error="仅支持本机或局域网 IP 访问。"), 403
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if origin and urlsplit(origin).netloc != request.host:
@@ -266,6 +289,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     def save_monthly_coupon_settings():
         return jsonify(message=monthly_scheduler.settings(request.get_json()))
 
+    @app.post('/api/monthly-coupon/page')
+    def save_monthly_coupon_page():
+        return jsonify(monthly_scheduler.update_page(request.get_json()))
+
     @app.errorhandler(CheckinTaskError)
     def checkin_task_error(error):
         return jsonify(error=str(error)), error.status
@@ -289,14 +316,14 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 raise CouponError('请选择共享账号池中的账号。', 'ACCOUNT_NOT_FOUND', 404)
             if saved.status != 'active':
                 raise CouponError('此账号尚未就绪，请从左侧账号管理恢复登录。', 'APP_LOGIN_REQUIRED', 401)
-            return unified.credentials(login_id)
+            return {**unified.credentials(login_id),'id':login_id}
 
     # This wallet entry was supplied by the user (dx.10086.cn/A/aIU7Gw).
     # Its public deep-link channel applies to operations entered through this URL,
     # independently of the account's private APP login cookie.
     coupon_uses = CouponUseManager(coupon_credentials, storage=database,
         payment_credentials_provider_by_id=unified.credentials,
-        wallet_entry='https://touch.10086.cn/i/mobile/mycoupons.html?channelId=P00000004912')
+        wallet_entry='https://touch.10086.cn/i/mobile/mycoupons.html?channelId=P00000004912',credential_cache=credential_cache)
     app.extensions['coupon_uses'] = coupon_uses
 
     @app.post('/api/coupons/use/prepare')
@@ -328,7 +355,11 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         page = request.args.get('page', '1')
         if state not in ('available', 'history') or sort not in COUPON_SORTS or not re.fullmatch(r'[1-9]\d{0,3}', page):
             raise CouponError('卡券筛选或页码无效，请刷新后重试。', 'INVALID_QUERY', 400)
-        result = CouponClient(lambda: coupon_credentials(login_id)).query(state=state, page=int(page), sort=sort)
+        saved = unified.get_id(login_id)
+        if saved is None:
+            raise CouponError('请选择共享账号池中的账号。', 'ACCOUNT_NOT_FOUND', 404)
+        with unified.phone_lock(saved.phone):
+            result = coupon_uses.query(login_id, state=state, page=int(page), sort=sort)
         coupon_uses.bind_pending(login_id, result['items'])
         result['pending_orders'] = coupon_uses.pending(login_id)
         return jsonify(result)
@@ -370,6 +401,79 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     @app.get('/api/checkin/status')
     def checkin_status():
         return jsonify(checkin_scheduler.status())
+
+    @app.get('/star-day')
+    def star_day_page():
+        return render_template('star_day.html')
+
+    @app.errorhandler(StarDayAuthError)
+    @app.errorhandler(StarDayError)
+    def star_day_error(error):
+        return jsonify(error=str(error), code=error.code), error.status
+
+    @app.get('/api/star-day/status')
+    def star_day_status():
+        return jsonify(star_scheduler.status())
+
+    @app.post('/api/star-day/open')
+    def star_day_open():
+        star_scheduler.open_page()
+        return jsonify(message='活动凭据检查已安排')
+
+    @app.post('/api/star-day/login/sms')
+    def star_day_send_sms():
+        return jsonify(star_scheduler.sms.send(star_scheduler.sms_snapshot(request.get_json().get('login_id'))))
+
+    @app.post('/api/star-day/login/submit')
+    def star_day_sms_login():
+        return jsonify(star_scheduler.sms_login(request.get_json()))
+
+    @app.post('/api/star-day/settings')
+    def star_day_settings():
+        return jsonify(message=star_scheduler.settings(request.get_json()))
+
+    @app.post('/api/star-day/calibrate')
+    def star_day_calibrate():
+        return jsonify(star_scheduler.calibrate())
+
+    @app.post('/api/star-day/signin')
+    def star_day_signin():
+        return jsonify(message=star_scheduler.run(request.get_json().get('login_ids')))
+
+    @app.post('/api/star-day/recheck')
+    def star_day_recheck():
+        return jsonify(message=star_scheduler.run(request.get_json().get('login_ids'), inspect=True))
+
+    @app.get('/api/star-day/products')
+    def star_day_products():
+        return jsonify(products=star_scheduler.products())
+
+    @app.post('/api/star-day/jobs')
+    def star_day_schedule():
+        return jsonify(star_scheduler.schedule(request.get_json()))
+
+    @app.post('/api/star-day/claim')
+    def star_day_claim():
+        return jsonify(star_scheduler.schedule(request.get_json(), immediate=True))
+
+    @app.get('/api/star-day/gift/options')
+    def star_day_gift_options():
+        return jsonify(star_scheduler.gift_options(request.args.get('login_id')))
+
+    @app.post('/api/star-day/gift')
+    def star_day_gift():
+        payload = request.get_json()
+        if not isinstance(payload.get('recipient'), dict):
+            raise StarDayError('请选择赠送接收人。', 'INVALID_RECIPIENT', 400)
+        mode = payload.get('mode', 'now')
+        if mode not in ('now','daily'):
+            raise StarDayError('请选择立即赠送或每天 10:00 抢购赠送。', 'INVALID_MODE', 400)
+        return jsonify(star_scheduler.schedule(payload, immediate=mode == 'now'))
+
+    @app.post('/api/star-day/jobs/stop')
+    def star_day_stop():
+        star_scheduler.stop(request.get_json().get('id'))
+        return jsonify(message='任务已停止并移除。')
 
     @app.post('/api/checkin/settings')
     def save_checkin_settings():
@@ -624,9 +728,12 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     def clear_login_states(phone):
         saved=unified.get(phone)
         if saved is not None:
+            platforms.forget(saved.id)
+            star_scheduler.forget(saved.id)
             monthly_scheduler.forget(saved.id)
             checkin_scheduler.forget(saved.id)
             lingxi_scheduler.cancel_login(saved.id)
+            credential_cache.forget(saved.id)
         unified.forget(phone)
         for logged in all_chat_accounts():
             if logged.app_phone == phone:
@@ -645,6 +752,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             except ActivityError as exc:
                 return jsonify(error=str(exc)), exc.status
         else:
+            if platforms.busy_login(saved.id):
+                return jsonify(error='该账号正在执行活动或短信验证，请完成后退出。'), 409
             if any(a.app_phone == saved.phone and a.lock.locked() for a in all_chat_accounts()):
                 return jsonify(error='该账号正在接收回复，请稍后退出。'), 409
             clear_login_states(saved.phone)
@@ -706,11 +815,17 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 return jsonify(error='暂时无法验证会话，请稍后重试。'), 502
 
         def events():
+            used_token = current.auth_code
             try:
                 for item in chat(current, message.strip()):
                     yield "data: " + json.dumps(item, ensure_ascii=False) + "\n\n"
             except LingxiError as exc:
                 if exc.authentication and saved:
+                    with unified.lock:
+                        if saved.token == used_token:
+                            saved.token = ''
+                            saved.app_context['lingxi_verified_at'] = 0
+                            unified.save()
                     unified.mark(saved, 'active', '灵犀会话将在使用时重连，其他功能可继续使用')
                 yield "data: " + json.dumps({"type": "error", "message": str(exc), "authentication": exc.authentication}, ensure_ascii=False) + "\n\n"
             except (RequestException, UnicodeError):
@@ -731,6 +846,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         def forget_locked_app_login(phone):
             from recharge.cmcc import ActivityError
             saved = unified.get(phone)
+            if saved is not None and platforms.busy_login(saved.id):
+                raise ActivityError('该账号正在执行活动或短信验证，请完成后退出。', 'ACCOUNT_BUSY', 409)
+            if saved is not None and star_scheduler.busy_login(saved.id):
+                raise StarDayError('该账号正在执行星动日任务，请完成后退出。', 'ACCOUNT_BUSY', 409)
             if saved is not None and monthly_scheduler.busy_login(saved.id):
                 raise MonthlyTaskError('该账号正在执行每月话费券，请完成后退出。', 409)
             if saved is not None and checkin_scheduler.busy_login(saved.id):
@@ -785,9 +904,21 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if recharge_scheduler is None and recharge_data_dir is not None:
             from recharge.scheduler import ClaimScheduler
             recharge_scheduler=ClaimScheduler(recharge_manager,storage=Path(recharge_data_dir)/'schedules.json')
+        def prepare_recharge_account(account):
+            saved = unified.get_id(account.pool_login_id)
+            if saved is None or saved.status != 'active':
+                raise ActivityError('共享账号需要重新登录。', 'APP_LOGIN_REQUIRED', 401)
+            try:
+                refresh_app_credentials(saved)
+            except (AppLoginError, RequestException) as error:
+                required = isinstance(error, AppCredentialError) and error.login_required
+                raise ActivityError(str(error), 'APP_LOGIN_REQUIRED' if required else 'APP_REFRESH_FAILED',
+                                    401 if required else 502, retryable=not required) from error
+
         recharge = create_recharge_app(manager=recharge_manager, scheduler=recharge_scheduler,
                                       app_login_provider=current_app_login, app_logout_provider=forget_app_login,
-                                      app_accounts_provider=unified.public, app_credentials_provider=shared_credentials)
+                                      app_accounts_provider=unified.public, app_credentials_provider=shared_credentials,credential_cache=credential_cache,
+                                      app_prepare_provider=prepare_recharge_account)
         recharge.config.update(SESSION_COOKIE_NAME='recharge_session', SESSION_COOKIE_PATH='/recharge')
         app.extensions['recharge_app'] = recharge
         app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {'/recharge': recharge})
@@ -800,6 +931,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         for linked in list(manager.accounts.values()):
             if linked.pool_login_id != saved.id:
                 continue
+            if scheduler.snapshots().get(linked.id, {}).get('managed'):
+                # Fixed Wednesday workers prepare their own activity session
+                # at 07:55. Other businesses do not depend on this restoration.
+                continue
             if scheduler.busy(linked.id) or not linked.client.operation_lock.acquire(blocking=False):
                 continue
             try:
@@ -808,10 +943,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 if snapshot is None:
                     continue
                 material = linked.client.app_material
-                if (linked.client.mode != 'app' or not material or material.get('cookie') != snapshot['cookie']):
+                if linked.client.mode != 'app' or not material or material.get('phone') != snapshot['phone']:
                     state = linked.client.connect_app(snapshot['cookie'],snapshot['phone'],snapshot['profile'])
                 else:
-                    state = linked.client.identity()
+                    state = linked.client.public_identity(linked.client.cached_user) if linked.client.cached_user is not None else linked.client.identity()
                     if not state.get('authenticated'):
                         state = linked.client.renew_app_session()
                 linked.name = saved.name or saved.public()['phone_masked']
@@ -829,19 +964,30 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 return True
             if lingxi_scheduler.busy_login(saved.id):
                 return False
+            if star_scheduler.busy_login(saved.id):
+                return False
+            if platforms.busy_login(saved.id):
+                return False
             if checkin_scheduler.busy_login(saved.id):
                 return False
             if monthly_scheduler.busy_login(saved.id):
                 return False
             if coupon_uses.busy_login(saved.id):
                 return False
+            if enable_recharge:
+                activity_manager = recharge.extensions['accounts']
+                activity_scheduler = recharge.extensions['scheduler']
+                if any(a.pool_login_id == saved.id and activity_scheduler.busy(a.id)
+                       for a in list(activity_manager.accounts.values())):
+                    return False
             if any(a.app_phone == saved.phone and a.lock.locked() for a in all_chat_accounts()):
                 return False
         # Only the primary APP refresh takes the phone lock. Business SSO
         # checks use their own sessions and cannot hold up another feature.
         errors = []
         try:
-            ensure_token(saved,refresh=True)
+            refresh_app_credentials(saved)
+            ensure_token(saved)
         except (LingxiError,AppLoginError,RequestException) as error:
             errors.append(error)
         if not any(isinstance(e,AppCredentialError) and e.login_required for e in errors):
@@ -894,6 +1040,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             if error.authentication:
                 with unified.lock:
                     if saved.token==token:
+                        saved.token = ''
+                        saved.app_context['lingxi_verified_at'] = 0
+                        unified.save()
                         unified.mark(saved,'active','定时消息鉴权失败，将在后台维护；其他功能可继续使用',expected_revision=revision)
                         app.extensions['session_maintenance'].due.pop(saved.id,None)
             raise TaskError('灵犀发送或接收失败，已保留收到的内容，本次未自动重发') from error
@@ -912,19 +1061,40 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             saved = unified.get_id(login_id)
             if saved is None or saved.status == 'login_required':
                 raise CheckinError('共享账号需要重新登录，请在账号管理填写验证码。', 'APP_LOGIN_REQUIRED', 401)
-            return unified.credentials(login_id)
+            return {**unified.credentials(login_id),'id':login_id}
 
-    checkin_scheduler = CheckinScheduler(checkin_credentials, unified.public, storage=database)
+    checkin_scheduler = CheckinScheduler(checkin_credentials, unified.public, storage=database,
+        client_factory=lambda provider:CheckinClient(provider,credential_cache=credential_cache))
     app.extensions['checkin_scheduler'] = checkin_scheduler
     def monthly_credentials(login_id):
         with unified.lock:
             saved = unified.get_id(login_id)
             if saved is None or saved.status == 'login_required':
                 raise MonthlyCouponAuthError('共享账号需要重新登录，请在账号管理填写验证码。', 'APP_LOGIN_REQUIRED', 401)
-            return unified.credentials(login_id)
+            return {**unified.credentials(login_id),'id':login_id}
 
-    monthly_scheduler = MonthlyCouponScheduler(monthly_credentials, unified.public, MonthlyCouponClient, storage=database)
+    monthly_scheduler = MonthlyCouponScheduler(monthly_credentials, unified.public,
+        lambda provider,**kwargs:MonthlyCouponClient(provider,credential_cache=credential_cache,**kwargs),storage=database)
     app.extensions['monthly_coupon_scheduler'] = monthly_scheduler
+    def star_credentials(login_id):
+        with unified.lock:
+            saved = unified.get_id(login_id)
+            if saved is None or saved.status != 'active':
+                raise StarDayError('共享账号需要重新登录，请在账号管理填写验证码。', 'APP_LOGIN_REQUIRED', 401)
+            return {**unified.credentials(login_id), 'id':login_id}
+
+    star_scheduler = StarDayScheduler(star_credentials, unified.public, storage=database)
+    app.extensions['star_day_scheduler'] = star_scheduler
+    def activity_credentials(login_id):
+        with unified.lock:
+            saved = unified.get_id(login_id)
+            if saved is None or saved.status != 'active':
+                return None
+            return {**unified.credentials(login_id),'id':login_id}
+
+    platforms = PlatformManager(app, root_dir=Path(activities.__file__).resolve().parent,
+                                storage=database, credentials=activity_credentials, accounts=unified.public)
+    app.extensions['platform_manager'] = platforms
     app.extensions['session_maintenance'] = SessionMaintenance(unified, maintain_login)
     return app
 
@@ -937,5 +1107,7 @@ if __name__ == "__main__":
     app.extensions['lingxi_scheduler'].start()
     app.extensions['checkin_scheduler'].start()
     app.extensions['monthly_coupon_scheduler'].start()
+    app.extensions['star_day_scheduler'].start()
+    app.extensions['platform_manager'].start()
     app.extensions['recharge_app'].extensions['scheduler'].start()
-    app.run(host="127.0.0.1", port=port, threaded=True, debug=False, use_reloader=False)
+    app.run(host=os.environ.get('LINGXI_HOST','0.0.0.0'), port=port, threaded=True, debug=False, use_reloader=False)

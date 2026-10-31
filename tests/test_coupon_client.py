@@ -147,7 +147,7 @@ class CouponClientTests(unittest.TestCase):
                 self.assertEqual(self.session.calls, [])
                 self.assertTrue(self.session.closed)
 
-    def test_rotated_credentials_abort_the_stale_activity_session(self):
+    def test_primary_rotation_does_not_abort_verified_same_phone_wallet(self):
         original = self.session.get
         def get(url, **options):
             response = original(url, **options)
@@ -155,10 +155,10 @@ class CouponClientTests(unittest.TestCase):
                 self.provider.return_value = {**SNAPSHOT, 'credential_revision': 2, 'cookie': 'JSESSIONID=new'}
             return response
         self.session.get = get
-        with self.assertRaises(CouponError) as error:
-            self.client.query()
-        self.assertEqual(error.exception.code, 'APP_CREDENTIALS_CHANGED')
-        self.assertEqual(self.session.posts, [])
+        result = self.client.query()
+        self.assertEqual(len(result['items']),1)
+        self.assertEqual(len(self.session.posts),1)
+        self.flow.call.assert_called_once()
 
     def test_metadata_only_refresh_keeps_the_existing_wallet_session_valid(self):
         with self.client._session() as (_, user, current):
