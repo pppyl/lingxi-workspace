@@ -59,7 +59,7 @@ class RecurringTests(unittest.TestCase):
         self.scheduler.settings({'signin_enabled':False,'signin_time':'00:01'})
 
     def create(self):
-        return StarDayScheduler(lambda i:{'id':i},lambda:deepcopy(self.pool),storage=self.storage,
+        return StarDayScheduler(lambda i:{'id':i,'phone':'13800000001'},lambda:deepcopy(self.pool),storage=self.storage,
             client_factory=self.factory,executor=self.queue,now=lambda:self.now)
 
     def job(self,ids=None):
@@ -288,6 +288,7 @@ class RecurringTests(unittest.TestCase):
         self.factory.inspect=limited
         self.scheduler.run(['a'],inspect=True);self.queue.drain()
         record=self.scheduler.data['accounts']['a']
+        self.assertEqual(record['query_state'],'rate_limited')
         self.assertEqual(record['retry_reason'],'rate_limited')
         self.assertEqual(record['retry_at'],'2026-11-02T09:30:00+08:00')
         self.now=self.now.replace(hour=9,minute=30)
@@ -295,6 +296,22 @@ class RecurringTests(unittest.TestCase):
         for _ in range(8):self.scheduler.status()
         self.assertFalse(self.queue.jobs)
         self.assertNotIn('a',self.preparations)
+
+    def test_legacy_rate_limit_is_not_restored_as_authentication_failure(self):
+        data=deepcopy(self.scheduler.data)
+        data['accounts']['a']={'observation':{'date':'20261101','today_state':'signed','month_claimed':False},
+            'query_state':'auth_failed','error_code':'-800','message':'请求频繁','history':[],
+            'retry_at':'2026-11-02T09:30:00+08:00','retry_reason':'rate_limited'}
+        self.storage.save_star_day_data(data)
+        self.scheduler=self.create()
+        account=self.scheduler.status()['accounts'][0]
+        self.assertEqual(account['state'],'rate_limited')
+        self.assertEqual(account['today_state'],'signed')
+        self.assertFalse(account['month_claimed'])
+        self.assertEqual(account['retry_at'],'2026-11-02T09:30:00+08:00')
+        self.assertEqual(self.storage.load_star_day_data()['accounts']['a']['query_state'],'rate_limited')
+        self.assertFalse(self.reads)
+        self.assertFalse(self.queue.jobs)
 
 
 if __name__=='__main__':unittest.main()

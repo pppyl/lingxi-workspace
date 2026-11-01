@@ -71,6 +71,62 @@ class CampaignSessionTests(unittest.TestCase):
         with self.session() as (client, _):self.assertEqual(client.cookies.get('access_token'), 'campaign-secret-1')
         self.assertEqual(self.auth_calls, 1)
 
+    def test_login_initialization_and_claim_keep_one_live_account_session(self):
+        with self.session() as (login_client,_):
+            login_client.cookies.set('initialization', 'profile-state', domain='qqt.cmicrwx.cn')
+        login_client.close.assert_not_called()
+        with self.session(allow_login=False) as (claim_client,_):
+            self.assertIs(claim_client,login_client)
+            self.assertEqual(claim_client.cookies.get('initialization'),'profile-state')
+        self.assertEqual(self.auth_calls,1)
+
+    def test_cookies_updated_after_login_survive_restart_without_extending_deadline(self):
+        with self.session():pass
+        original=deepcopy(self.cache.load('a',self.snapshot['phone']))
+        self.stamp+=600
+        with self.session(allow_login=False) as (client,_):
+            client.cookies.set('initialization','profile-state',domain='qqt.cmicrwx.cn')
+        restored=StarDaySessionCache(self.storage,now=lambda:self.stamp)
+        saved=restored.load('a',self.snapshot['phone'])
+        self.assertIn('initialization',[c['name'] for c in saved['cookies']])
+        self.assertEqual(saved['created_at'],original['created_at'])
+        self.assertEqual(saved['expires_at'],original['expires_at'])
+
+    def test_restart_keeps_authenticated_session_user_agent(self):
+        client=self.factory()
+        client.headers['User-Agent']='saved-mobile-web-identity'
+        client.cookies.set('access_token','sms-session',domain='qqt.cmicrwx.cn')
+        self.cache.save('a',self.snapshot['phone'],client,source='sms')
+        self.cache=StarDaySessionCache(self.storage,now=lambda:self.stamp)
+        with self.session(allow_login=False) as (restored,_):
+            self.assertEqual(restored.headers['User-Agent'],'saved-mobile-web-identity')
+            self.assertEqual(restored.cookies.get('access_token'),'sms-session')
+        self.assertEqual(self.auth_calls,0)
+
+    def test_restored_campaign_uses_ajax_headers_without_desktop_navigation_defaults(self):
+        with self.session():pass
+        self.cache = StarDaySessionCache(self.storage, now=lambda:self.stamp)
+        with patch('star_day_auth.requests.Session',return_value=self.factory()) as factory:
+            with star_day_session(lambda:deepcopy(self.snapshot),cache=self.cache,allow_login=False) as (client,_):
+                self.assertEqual(client.headers['X-Requested-With'],'XMLHttpRequest')
+                self.assertEqual(client.headers['Accept'],'application/json, text/javascript, */*; q=0.01')
+                self.assertEqual(client.headers['Sec-Fetch-Dest'],'empty')
+                self.assertEqual(client.headers['Sec-Fetch-Mode'],'cors')
+                factory.assert_called_once_with(impersonate='chrome',default_headers=False,use_thread_local_curl=False)
+        self.assertEqual(self.auth_calls,1)
+
+    def test_valid_campaign_is_independent_of_primary_login_but_expiry_never_reuses_inactive_primary(self):
+        with self.session():pass
+        self.snapshot['status']='login_required'
+        with self.session(allow_login=False) as (client,_):
+            self.assertEqual(client.cookies.get('access_token'),'campaign-secret-1')
+        self.assertEqual(self.auth_calls,1)
+        self.stamp+=7201
+        with self.assertRaises(StarDayAuthError) as error:
+            with self.session():pass
+        self.assertEqual(error.exception.code,'APP_LOGIN_REQUIRED')
+        self.assertEqual(self.auth_calls,1)
+
     def test_concurrent_queries_share_one_campaign_login(self):
         def read(_):
             with self.session() as (client, _):return client.cookies.get('access_token')
@@ -80,21 +136,40 @@ class CampaignSessionTests(unittest.TestCase):
         self.assertEqual(self.auth_calls, 1)
 
     def test_force_refresh_is_explicit_and_failure_does_not_replace_valid_cookie(self):
-        with self.session():pass
+        with self.session() as (original,_):pass
         self.denied = True
         with self.assertRaises(StarDayAuthError):
             with self.session(force=True):pass
         self.assertEqual(self.cache.load('a', self.snapshot['phone'])['cookies'][0]['value'], 'campaign-secret-1')
-        with self.session():pass
+        with self.session() as (reused,_):self.assertIs(reused,original)
+        original.close.assert_not_called()
+        self.clients[-1].close.assert_called_once()
         self.assertEqual(self.auth_calls, 2)
 
     def test_accounts_never_share_tokens_and_logout_removes_persisted_cookie(self):
-        with self.session():pass
+        with self.session() as (first,_):pass
         self.snapshot.update(id='b', phone='13800000002')
         with self.session() as (client, _):self.assertEqual(client.cookies.get('access_token'), 'campaign-secret-2')
         self.cache.forget('a')
+        first.close.assert_called_once()
+        self.assertNotIn('a',self.cache.clients)
         self.assertIsNone(self.storage.load_activity_data('star-day-session:a'))
         self.assertIsNotNone(self.cache.load('b', self.snapshot['phone']))
+
+    def test_cookie_rotation_preserves_the_earliest_official_expiry(self):
+        with self.session():pass
+        original=deepcopy(self.cache.load('a',self.snapshot['phone']))
+        shortened=original['expires_at']-600
+        with self.session(allow_login=False) as (client,_):
+            for cookie in client.cookies.jar:
+                if cookie.name=='access_token':cookie.expires=shortened
+        self.assertEqual(self.cache.load('a',self.snapshot['phone'])['expires_at'],shortened)
+        self.stamp+=100
+        with self.session(allow_login=False) as (client,_):
+            for cookie in client.cookies.jar:
+                if cookie.name=='access_token':cookie.expires=original['expires_at']+3600
+        self.assertEqual(self.cache.load('a',self.snapshot['phone'])['expires_at'],shortened)
+        self.assertEqual(self.auth_calls,1)
 
     def test_official_logout_clears_cookie_but_business_rejection_keeps_it(self):
         client = StarDayClient(lambda:deepcopy(self.snapshot), session_factory=self.factory, session_cache=self.cache)

@@ -111,13 +111,18 @@ class Environment:
             stallName='100MB流量日包券', couponValue='100', valueFormat='100', unitFormat='MB',
             activityId='private-list-activity', stallId='private-list-goods', marketCode='private-market')
 
+    def flow(self):
+        self.row.update(busiType='ll01', provPcardType=None, pCardType='001', smsCheck='1',
+            stallName='2GB流量券', couponValue='2', valueFormat='2', unitFormat='GB',
+            timeFlag='3', activityId='private-flow-activity')
+
     @property
     def coupon_id(self):
         return _item(self.row)['id']
 
     @property
     def final_calls(self):
-        return [call for call in self.calls if '/saveorder' in call[0] or '/rightsCouponsUse/' in call[0]]
+        return [call for call in self.calls if any(path in call[0] for path in ('/saveorder','/rightsCouponsUse/','/flow/coupongive/'))]
 
 
 class Session:
@@ -158,7 +163,7 @@ class Session:
             return Response(encoded({}))
         if '/pcardsms/' in url:
             return Response(encoded(self.env.sms_response))
-        if '/saveorder' in url or '/rightsCouponsUse/' in url:
+        if '/saveorder' in url or '/rightsCouponsUse/' in url or '/flow/coupongive/' in url:
             if self.env.before_final:
                 self.env.before_final()
             if self.env.final_error:
@@ -196,7 +201,7 @@ class CouponUseTests(unittest.TestCase):
         kwargs.setdefault('risk_token', 'official-risk-fixture')
         kwargs.setdefault('risk_lid', 'official-lid-fixture')
         operation = self.manager.operations.get(args[0])
-        if operation and operation.kind in ('exchange', 'rights') and operation.result is None and not kwargs.get('prepare_risk'):
+        if operation and operation.kind in ('exchange', 'rights', 'flow') and operation.result is None and not kwargs.get('prepare_risk'):
             self.env.sdk_token = kwargs['risk_token']
             self.manager.confirm(args[0], sms_code=kwargs.get('sms_code', ''), prepare_risk=True)
             self.manager.wallet_sdk(args[0], 'GET', '',
@@ -217,6 +222,128 @@ class CouponUseTests(unittest.TestCase):
         self.assertEqual(self.storage.data, {})
         for secret in [PHONE, 'private-exchange-code', 'private-session', 'official-operation']:
             self.assertNotIn(secret, json.dumps(preview))
+
+    def test_direct_2gb_flow_coupon_has_its_own_prepare_and_sms_template(self):
+        self.env.flow()
+        self.assertEqual(_item(self.env.row)['use_kind'],'flow')
+        preview=self.prepare()
+        self.assertEqual((preview['kind'],preview['requires_sms'],preview['coupon_unit']),('flow',True,'GB'))
+        self.assertFalse(any(path in call[0] for call in self.env.calls for path in ('/ruleinfo/','/pcardInfoQry/','/saveorder')))
+        self.assertEqual(self.env.final_calls,[])
+        self.assertNotIn('private-',json.dumps(preview))
+        self.manager.sms(preview['operation_id'])
+        call=next(call for call in self.env.calls if '/commonSms/' in call[0])
+        phone_path=base64.b64encode(_cbc_encrypt(PHONE).encode()).decode()
+        self.assertTrue(call[0].endswith('/'+phone_path))
+        self.assertEqual(call[1],{'phoneNo':PHONE,'msgType':'03','pcardName':'','pcardNo':'',
+            'busiCode':'','busiName':'','busiActId':'private-flow-activity','useChannelId':'11','busiType':None})
+        self.assertTrue(call[2].get('msgId'))
+
+    def test_direct_flow_redeems_exact_form_with_wallet_risk_and_no_fee_order(self):
+        self.env.flow()
+        preview=self.prepare()
+        self.manager.sms(preview['operation_id'])
+        self.env.final_response={'retCode':'000000','data':None}
+        result=self.confirm(preview['operation_id'],sms_code='123456')
+        self.assertEqual(result['state'],'accepted')
+        call,=self.env.final_calls
+        phone_path=base64.b64encode(_cbc_encrypt(PHONE).encode()).decode()
+        self.assertTrue(call[0].endswith('/flow/coupongive/'+phone_path))
+        self.assertEqual(call[1],{'cardVersion':'2','channel':'11','payPhoneNo':PHONE,
+            'pcardNo':'private-exchange-code','phoneNo':PHONE,'smsCode':'123456',
+            'smsCheck':'1','wtAc':'_','wtAcId':'private-session'})
+        self.assertTrue(call[2].get('msgId'))
+        self.assertFalse(any(path in c[0] for c in self.env.calls for path in ('/pcardsms/','/pcardvalid/','/saveorder','/rightsCouponsUse/')))
+        self.assertEqual(self.confirm(preview['operation_id'],sms_code='123456'),result)
+        self.assertEqual(len(self.env.final_calls),1)
+
+    def test_direct_flow_without_sms_and_processing_result_do_not_duplicate_submission(self):
+        self.env.flow();self.env.row['smsCheck']='0'
+        preview=self.prepare()
+        self.assertFalse(preview['requires_sms'])
+        self.env.final_response={'retCode':'571001','retMsg':'处理中'}
+        self.env.detail_response=encoded({'couponStatus':'10'},gcm=True)
+        result=self.confirm(preview['operation_id'])
+        self.assertEqual(result['state'],'accepted')
+        self.assertEqual(self.env.final_calls[0][1]['smsCode'],'')
+        self.assertEqual(len(self.env.final_calls),1)
+        self.assertFalse(any('/commonSms/' in c[0] for c in self.env.calls))
+
+    def test_flow_recharge_and_online_variants_are_not_misrouted_to_direct_redemption(self):
+        self.env.flow()
+        for field,value in (('pCardType','002'),('cardVersion','11'),('cardVersion','12')):
+            row={**self.env.row,field:value}
+            self.assertEqual(_item(row)['use_kind'],'')
+
+    def test_coupon_family_is_independent_of_face_value_unit_and_marketing_name(self):
+        for kind in ('flow','rights'):
+            for amount,unit,name in (('100','MB','流量日包'),('1','GB','优惠券甲'),('2','GB','权益乙'),
+                                     ('10','GB','套餐赠券'),(None,'','官方未提供面额')):
+                with self.subTest(kind=kind,amount=amount):
+                    getattr(self.env,kind)()
+                    self.env.row.update(couponValue=amount,valueFormat=amount,unitFormat=unit,stallName=name)
+                    self.assertEqual(_item(self.env.row)['use_kind'],kind)
+                    preview=self.prepare()
+                    self.assertEqual(preview['kind'],kind)
+                    self.assertFalse(any('/ruleinfo/' in call[0] for call in self.env.calls))
+
+    def test_unknown_coupon_is_read_only_until_user_explicitly_prepares_and_confirms_again(self):
+        self.env.flow();self.env.row['smsCheck']='0'
+        first=self.prepare()
+        self.env.final_response={'retCode':'571001'}
+        self.assertEqual(self.confirm(first['operation_id'])['state'],'unknown')
+        checked=self.prepare()
+        self.assertTrue(checked['can_retry'])
+        self.assertEqual(checked['state'],'unconfirmed')
+        self.assertEqual(len(self.env.final_calls),1)
+        retried=self.manager.prepare(LOGIN,self.env.coupon_id,retry=True)
+        self.assertIn('确认兑换',retried['message'])
+        self.assertEqual(len(self.env.final_calls),1)
+        self.assertEqual(next(iter(self.storage.data.values()))['state'],'unknown')
+        self.env.final_response={'retCode':'000000','data':''}
+        self.env.detail['couponStatus']='10'
+        self.assertEqual(self.confirm(retried['operation_id'])['state'],'accepted')
+        self.assertEqual(len(self.env.final_calls),2)
+        prior=next(iter(self.storage.data.values()))['previous_attempts']
+        self.assertEqual(prior[-1]['operation_id'],first['operation_id'])
+
+    def test_used_records_resolve_uncertain_results_for_both_flow_and_fee_families(self):
+        for family in ('flow','exchange'):
+            with self.subTest(family=family):
+                self.storage=Storage()
+                self.env=Environment(self.storage)
+                import coupon_use
+                coupon_use.CouponClient.side_effect=self.env.client
+                if family=='flow':self.env.flow()
+                self.manager=CouponUseManager(self.env.provider,self.storage)
+                self.env.final_error=requests.RequestsError('network lost')
+                preview=self.prepare()
+                if preview['requires_sms']:self.manager.sms(preview['operation_id'])
+                self.assertEqual(self.confirm(preview['operation_id'],sms_code='123456')['state'],'unknown')
+                self.env.row['couponStatus']='10'
+                checked=self.prepare()
+                self.assertEqual(checked['state'],'accepted')
+                self.assertIn('官方历史',checked['message'])
+                self.assertEqual(len(self.env.final_calls),1)
+
+    def test_processing_coupon_is_not_retried_and_recharge_never_offers_unknown_order_replay(self):
+        self.env.flow();self.env.row['smsCheck']='0'
+        first=self.prepare();self.env.final_response={'retCode':'571001'}
+        self.confirm(first['operation_id'])
+        self.env.row['couponStatus']='9'
+        self.assertFalse(self.prepare()['can_retry'])
+        self.assertEqual(len(self.env.final_calls),1)
+
+    def test_acknowledgement_commands_accept_empty_success_data(self):
+        for data in ('',[],False):
+            with self.subTest(data=data):
+                self.manager.data={};self.storage.data={}
+                self.env.final_response={'retCode':'000000','data':data}
+                self.assertEqual(self.exchange()['state'],'accepted')
+
+    def test_incomplete_agreement_display_does_not_block_an_otherwise_supported_coupon(self):
+        self.env.rights();self.env.detail['agreementName']='官方协议'
+        self.assertEqual(self.prepare()['kind'],'rights')
 
     def test_equity_flow_coupon_uses_detail_sms_requirement_and_native_sms_template(self):
         self.env.rights()
@@ -462,10 +589,12 @@ class CouponUseTests(unittest.TestCase):
     def test_equity_flow_agreement_and_missing_sms_context_are_not_submitted(self):
         self.env.rights()
         self.env.detail['agreementName'] = '官方协议'
+        self.env.detail['agreementUrl'] = 'https://touch.10086.cn/agreement'
         with self.assertRaises(CouponUseError) as error:
             self.prepare()
         self.assertEqual(error.exception.code, 'VERIFICATION_REQUIRED')
         self.env.detail.pop('agreementName')
+        self.env.detail.pop('agreementUrl')
         self.env.detail.pop('activityId')
         with self.assertRaises(CouponUseError) as error:
             self.prepare()
@@ -803,16 +932,21 @@ class CouponUseTests(unittest.TestCase):
         self.assertEqual(self.confirm(first['operation_id']), result)
         self.assertEqual(second['operation_id'], first['operation_id'])
         self.assertEqual(self.confirm(second['operation_id']), result)
-        with self.assertRaises(CouponUseError):
-            self.prepare()
+        checked = self.prepare()
+        self.assertEqual(checked['state'], 'unconfirmed')
+        self.assertFalse(checked['can_retry'])
         self.assertEqual(len(self.env.final_calls), 1)
 
     def test_persistence_contains_no_account_sms_session_or_coupon_secrets(self):
         self.exchange()
         persisted = json.dumps(self.storage.data)
-        for secret in [PHONE, LOGIN, self.env.coupon_id, 'private-exchange-code', '123456',
+        for secret in [PHONE, 'private-exchange-code', '123456',
                        'private-session', 'private-sms', 'fake-imei']:
             self.assertNotIn(secret, persisted)
+        record = next(iter(self.storage.data.values()))
+        self.assertEqual(record['login_id'], LOGIN)
+        self.assertEqual(record['coupon_id'], self.env.coupon_id)
+        self.assertTrue(record['created_at'])
         self.assertEqual(len(next(iter(self.storage.data))), 64)
 
     def test_recovery_of_submitted_state_blocks_replay_after_restart(self):
@@ -821,21 +955,22 @@ class CouponUseTests(unittest.TestCase):
         self.storage.data = {key: {'state': 'submitted', 'operation_id': 'interrupted', 'result': None}}
         restarted = CouponUseManager(self.env.provider, self.storage)
         self.assertEqual(self.storage.data[key]['state'], 'unknown')
-        with self.assertRaises(CouponUseError):
-            restarted.prepare(LOGIN, self.env.coupon_id)
-        self.assertEqual(self.env.calls, [])
+        checked = restarted.prepare(LOGIN, self.env.coupon_id)
+        self.assertEqual(checked['state'], 'unconfirmed')
+        self.assertEqual(self.env.final_calls, [])
 
     def test_timeout_after_submission_is_unknown_and_cannot_be_retried(self):
         self.env.final_error = requests.RequestsError('private URL and coupon code')
         result = self.exchange()
         self.assertEqual(result['state'], 'unknown')
         self.assertNotIn('private', result['message'])
-        with self.assertRaises(CouponUseError):
-            self.prepare()
+        checked = self.prepare()
+        self.assertEqual(checked['state'], 'unconfirmed')
+        self.assertTrue(checked['can_retry'])
         self.assertEqual(len(self.env.final_calls), 1)
 
     def test_malformed_success_and_missing_result_code_are_unknown_after_post(self):
-        for response in [{'retCode': '000000', 'data': []}, {'data': {}},
+        for response in [{'data': {}},
                          {'retCode': '000000', 'data': {'outParam': 'invalid'}}]:
             with self.subTest(response=response):
                 self.storage.data = {}

@@ -3,15 +3,14 @@ import re
 import time
 
 from http_transport import requests
-from recharge.cmcc import APP_UA
-from star_day_auth import ORIGIN, ENTRY_URL, PLATFORM, StarDayAuthError
+from star_day_auth import AJAX_HEADERS, WEB_UA, PLATFORM, StarDayAuthError, RATE_LIMIT_MESSAGE
 from star_day_crypto import encrypt_sms_phone, encrypt_login_value
 
 
 class StarDaySmsLogin:
     def __init__(self, cache, *, session_factory=None, now=time.time):
         self.cache, self.now = cache, now
-        self.session_factory = session_factory or (lambda:requests.Session(impersonate='chrome'))
+        self.session_factory = session_factory or (lambda:requests.Session(impersonate='chrome', default_headers=False, use_thread_local_curl=False))
         self.pending = {}
 
     def _request(self, client, path, data):
@@ -31,7 +30,7 @@ class StarDaySmsLogin:
         if code != '1':
             message = {'0':'验证码错误，请检查后重新输入。','-41':'验证码错误，请检查后重新输入。',
                 '-42':'获取验证码过于频繁，请稍后再试。','-43':'获取验证码过于频繁，请稍后再试。',
-                '-44':'验证码已失效，请重新获取。','-800':'短信正在下发，请稍候，不要重复获取。'}.get(code,'星动日短信认证未通过（'+code[:20]+'）。')
+                '-44':'验证码已失效，请重新获取。','-800':RATE_LIMIT_MESSAGE}.get(code,'星动日短信认证未通过（'+code[:20]+'）。')
             raise StarDayAuthError(message, 'SMS_REJECTED', 400)
         return value
 
@@ -47,7 +46,7 @@ class StarDaySmsLogin:
             if previous:
                 previous['client'].close()
             client = self.session_factory()
-            client.headers.update({'User-Agent':APP_UA,'Origin':ORIGIN,'Referer':ENTRY_URL,'X-Requested-With':'XMLHttpRequest'})
+            client.headers.update({**AJAX_HEADERS, 'User-Agent':WEB_UA})
             # Reserve before HTTP: a timeout can occur after the SMS was sent.
             record = {'client':client,'phone':phone,'sent_at':self.now(),'sent':False}
             self.pending[login_id] = record
@@ -67,9 +66,10 @@ class StarDaySmsLogin:
             self._request(client,'/login.action',{'phone':encrypt_login_value(phone),'smsCode':encrypt_login_value(code)})
             if not any(c.name == 'access_token' and c.value for c in client.cookies.jar):
                 raise StarDayAuthError('认证响应缺少星动日凭据，请稍后重试。','AUTH_FORMAT')
-            self.cache.save(login_id,phone,client,source='sms')
+            saved = self.cache.save(login_id,phone,client,source='sms')
             self.pending.pop(login_id)
-            client.close()
+            if not self.cache.retain(login_id,saved,client):
+                client.close()
             return {'message':'星动日短信登录成功，活动凭据已保存。'}
 
     def forget(self, login_id):

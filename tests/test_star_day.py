@@ -84,6 +84,7 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(result['today_state'],'signed')
         call=next(c for c in self.calls if c[1]=='/sign/sign')
         self.assertEqual(call[0],'POST');self.assertEqual(call[2]['json'],{'sspid':'75628'})
+        self.assertNotIn('Content-Type',call[2]['headers'])
         self.client.signin(before_submit=lambda *a:self.fail('duplicate'))
         self.assertEqual(sum(c[1]=='/sign/sign' for c in self.calls),1)
         self.assertEqual(actions,[('signin',self.now.strftime('%Y%m%d'))])
@@ -157,6 +158,7 @@ class ClientTests(unittest.TestCase):
         writes=[c for c in self.calls if c[1]=='/normal/initNormalNewQy']
         self.assertEqual(len(writes),1)
         self.assertEqual(writes[0][2]['data'],{'productId':'3453','receivePhone':'','channelCode':'75628','isRandom':'0','sourece':'2'})
+        self.assertEqual(writes[0][2]['headers']['Content-Type'],'application/x-www-form-urlencoded; charset=UTF-8')
         self.assertEqual(result['state'],'success')
         self.assertFalse(any('/queryVipLevel' in c[1] or '/queryIndexReceive' in c[1] for c in self.calls))
         self.assertTrue(all(s.closed for s in self.sessions))
@@ -322,7 +324,7 @@ class SchedulerTests(unittest.TestCase):
                 if cancelled():return {'state':'stopped','message':'已停止'}
                 if before_submit('benefit',target_at.strftime('%Y%m')):return {'state':'success','message':'领取成功','attempt_count':1}
                 return {'state':'unknown','message':'未确认','uncertain':True}
-        return StarDayScheduler(lambda key:{'id':key},lambda:deepcopy(self.pool),storage=self.storage,client_factory=Client,executor=self.queue,now=lambda:self.now)
+        return StarDayScheduler(lambda key:{'id':key,'phone':'13800000001'},lambda:deepcopy(self.pool),storage=self.storage,client_factory=Client,executor=self.queue,now=lambda:self.now)
     def test_default_all_valid_and_restored_or_new_after_start_catchup(self):
         self.pool.append({'id':'b','status':'login_required'})
         self.scheduler.settings({'signin_enabled':True,'signin_time':'08:00'})
@@ -448,6 +450,27 @@ class SchedulerTests(unittest.TestCase):
         for _ in range(2):
             self.scheduler.schedule(payload,immediate=True);self.scheduler.tick();self.queue.drain();self.scheduler.tick()
         self.assertEqual(self.claims,[('a','123'),('a','123')])
+
+    def test_rate_limited_claim_stops_background_retries_but_allows_one_explicit_manual_attempt(self):
+        self.scheduler.settings({'signin_enabled':False,'signin_time':'08:00'})
+        payload={'product_id':'123','phase':1,'login_ids':['a']}
+        def limited(client,product_id,phase,*,before_submit,**kwargs):
+            self.assertTrue(before_submit('benefit',self.now.strftime('%Y%m')))
+            raise StarDayError('请求频繁','-800',rejected=True)
+        with patch.object(self.scheduler.client_factory,'claim',limited):
+            self.scheduler.schedule(payload,immediate=True)
+            self.scheduler.tick();self.queue.drain();self.scheduler.tick()
+        self.assertEqual(self.scheduler.status()['accounts'][0]['state'],'rate_limited')
+        self.assertNotIn('a:benefit:202610',self.scheduler.data['actions'])
+        self.assertTrue(self.scheduler._deferred('a'))
+        for _ in range(3):
+            self.now+=timedelta(minutes=5)
+            self.scheduler.tick();self.queue.drain()
+        self.assertFalse(self.claims)
+        self.scheduler.schedule(payload,immediate=True)
+        self.scheduler.tick();self.queue.drain();self.scheduler.tick()
+        self.assertEqual(self.claims,[('a','123')])
+        self.assertTrue(self.scheduler.status()['accounts'][0]['month_claimed'])
 
     def test_immediate_claim_preserves_prior_unconfirmed_marker_and_running_account_exclusion(self):
         self.scheduler.settings({'signin_enabled':False,'signin_time':'08:00'})

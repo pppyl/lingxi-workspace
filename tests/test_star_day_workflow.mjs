@@ -136,6 +136,20 @@ test('stop removes the task from the list rather than retaining a stopped row',a
   assert.equal(walk(get('star-jobs'),'原预约 · 1 个账号'),undefined);
 });
 
+test('SMS login stays disabled outside campaign authentication failure and sends no SMS on click',async()=>{
+  const {get,calls,accounts}=await fixture();
+  for(const state of ['ready','waiting_session','ineligible','failed','running','login_required','rate_limited']){
+    accounts[0].state=state;
+    get('star-refresh').click();await flush();
+    const sms=walk(get('star-accounts').children[0],'短信登录');
+    assert.equal(sms.disabled,true,state);
+    sms.click();await flush();
+  }
+  assert.equal(get('star-sms').open,undefined);
+  assert.equal(calls.some(c=>c.url==='/api/star-day/login/sms'),false);
+  assert.equal(walk(get('star-accounts').children[3],'短信登录'),undefined);
+});
+
 test('campaign authentication failure offers one SMS recovery instead of repeating APP SSO',async()=>{
   const {get,calls,accounts}=await fixture();accounts[0].state='auth_failed';accounts[0].today_state='ineligible';
   get('star-refresh').click();await flush();
@@ -149,6 +163,22 @@ test('campaign authentication failure offers one SMS recovery instead of repeati
   assert.equal(calls.some(c=>c.url==='/api/star-day/claim'),false);
 });
 
+test('rate limiting keeps manual benefit claim available without treating the account as logged out',async()=>{
+  const {get,calls,accounts,all}=await fixture();
+  Object.assign(accounts[0],{state:'rate_limited',today_state:'signed',retry_reason:'rate_limited',retry_at:'2026-11-02T09:30:00+08:00'});
+  get('star-refresh').click();await flush();
+  const row=get('star-accounts').children[0];
+  assert.ok(walk(row,'今日已签到'));
+  assert.ok(walk(row,'限流后暂停自动重试'));
+  assert.equal(walk(row,'短信登录').disabled,true);
+  assert.equal(walk(row,'立即领取').disabled,false);
+  assert.equal(walk(row,'赠送权益').disabled,false);
+  walk(row,'立即领取').click();await flush();
+  assert.equal(get('star-reservation').open,true);
+  assert.deepEqual(all('#star-account-options input:checked').map(b=>b.value),['a']);
+  assert.equal(calls.some(c=>c.url==='/api/star-day/login/sms'||c.url==='/api/star-day/recheck'||c.url==='/api/star-day/claim'),false);
+});
+
 test('later authentication failure does not erase an officially confirmed sign-in for today',async()=>{
   const {get,accounts}=await fixture();
   Object.assign(accounts[0],{state:'auth_failed',today_state:'signed',message:'活动认证未通过'});
@@ -156,7 +186,7 @@ test('later authentication failure does not erase an officially confirmed sign-i
   const row=get('star-accounts').children[0];
   assert.ok(walk(row,'今日已签到'));
   assert.equal(walk(row,'活动认证待恢复'),undefined);
-  assert.ok(walk(row,'短信登录'));
+  assert.equal(walk(row,'短信登录').disabled,false);
 });
 
 test('daily eligibility and authentication checks display the next date instead of continuous recovery',async()=>{
@@ -228,7 +258,9 @@ test('automatic refresh only reads local status and never reopens login or sends
 });
 
 test('SMS recovery submits entered code to the selected account without a primary APP login',async()=>{
-  const {get,calls}=await fixture();
+  const {get,calls,accounts}=await fixture();
+  accounts[0].state='auth_failed';
+  get('star-refresh').click();await flush();
   walk(get('star-accounts').children[0],'短信登录').click();await flush();
   assert.equal(get('star-sms-send').disabled,true);
   get('star-sms-code').value='012345';
@@ -236,4 +268,5 @@ test('SMS recovery submits entered code to the selected account without a primar
   assert.deepEqual(calls.find(c=>c.url==='/api/star-day/login/submit').body,{login_id:'a',code:'012345'});
   assert.equal(get('star-sms').open,false);
   assert.equal(calls.filter(c=>c.url==='/api/star-day/login/sms').length,1);
+  assert.equal(walk(get('star-accounts').children[0],'短信登录').disabled,true);
 });

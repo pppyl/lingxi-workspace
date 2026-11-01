@@ -16,9 +16,22 @@ from recharge.cmcc import APP_UA
 ORIGIN = 'https://qqt.cmicrwx.cn'
 PLATFORM = ORIGIN + '/2016tyjf/xhmqqthy'
 ENTRY_URL = PLATFORM + '/res/wap/xdrNormal.html?sspId=75628'
+WEB_UA = APP_UA.replace('; wv', '').replace(' Version/4.0', '').split(' leadeon/')[0]
+RATE_LIMIT_MESSAGE = '尝试更换服务ip再试'
+AJAX_HEADERS = {
+    'User-Agent': APP_UA, 'Origin': ORIGIN, 'Referer': ENTRY_URL,
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'zh-CN,zh;q=0.9', 'X-Requested-With': 'XMLHttpRequest',
+    'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'same-origin',
+    'Sec-CH-UA-Mobile': '?1', 'Sec-CH-UA-Platform': '"Android"',
+}
 CHECK_UID_PATH = '/biz-orange/LN/checkUIDAction/checkUID'
 # InAlgoEncryptTEL uses rsa_s1, while the SMS-login Encrypt path uses rsa_s.
 UID_PUBLIC_MODULUS = 114512387112779088361433476536107433324866010397202326099006996441402171068665405936265402380230135606111502335414309866692637875723467375466815160479383764510644997690933726692443658650748034123556148312806692748125585902936431602753059235580873529762252918450460010900806924390768877421758540880404865098509
+
+
+def explain_rate_limit(message, code=''):
+    return RATE_LIMIT_MESSAGE if str(code) in ('-800', 'UPSTREAM_RATE_LIMITED') or '请求频繁' in message else message
 
 
 def encrypt_uid(uid, now=None):
@@ -37,7 +50,7 @@ class StarDaySessionCache:
     """Keep campaign cookies separate from rotating primary APP credentials."""
     def __init__(self, storage=None, *, now=time.time):
         self.storage, self.now = storage, now
-        self.entries, self.locks, self.lock = {}, {}, RLock()
+        self.entries, self.clients, self.locks, self.lock = {}, {}, {}, RLock()
 
     def account_lock(self, login_id):
         with self.lock:
@@ -57,17 +70,41 @@ class StarDaySessionCache:
         cookies = [{'name': c.name, 'value': c.value, 'domain': c.domain, 'path': c.path,
                     'secure': c.secure, 'expires': c.expires} for c in client.cookies.jar]
         expiry = min([stamp+7200]+[c['expires'] for c in cookies if c['name'] == 'access_token' and c['expires'] is not None])
-        saved = {'phone': phone, 'created_at': stamp, 'expires_at': expiry, 'cookies': cookies, 'source':source}
+        headers = {key:client.headers[key] for key in ('User-Agent','Accept-Language') if key in client.headers}
+        saved = {'phone': phone, 'created_at': stamp, 'expires_at': expiry, 'cookies': cookies, 'source':source, 'headers':headers}
         with self.lock:
             if self.storage:
                 self.storage.save_activity_data('star-day-session:'+login_id, saved)
             self.entries[login_id] = saved
+        return saved
+
+    def retain(self, login_id, saved, client):
+        """Keep the initialized HTTP session and cookies, without renewing login."""
+        with self.lock:
+            if self.entries.get(login_id) is not saved or saved['expires_at'] <= self.now():
+                return False
+            cookies = [{'name': c.name, 'value': c.value, 'domain': c.domain, 'path': c.path,
+                        'secure': c.secure, 'expires': c.expires} for c in client.cookies.jar]
+            expiry = min([saved['expires_at']]+[c['expires'] for c in cookies if c['name'] == 'access_token' and c['expires'] is not None])
+            if cookies != saved['cookies'] or expiry != saved['expires_at']:
+                changed = {**saved, 'cookies':cookies, 'expires_at':expiry}
+                if self.storage:
+                    self.storage.save_activity_data('star-day-session:'+login_id, changed)
+                saved.update(changed)
+            previous = self.clients.get(login_id)
+            if previous and previous[1] is not client:
+                previous[1].close()
+            self.clients[login_id] = (saved, client)
+            return True
 
     def forget(self, login_id):
         with self.account_lock(login_id), self.lock:
             if self.storage:
                 self.storage.delete_activity_data('star-day-session:'+login_id)
             self.entries.pop(login_id, None)
+            previous = self.clients.pop(login_id, None)
+            if previous:
+                previous[1].close()
 
 
 @contextmanager
@@ -89,16 +126,29 @@ def star_day_session(credentials_provider, *, session_factory=None, cache=None, 
             raise StarDayAuthError('共享账号登录已变更，请使用最新登录态重试', 'APP_CREDENTIALS_CHANGED', 409)
 
     with cache.account_lock(login_id) if cache is not None else nullcontext():
-        client = session_factory() if session_factory else requests.Session(impersonate='chrome')
-        client.headers.update({'User-Agent': APP_UA, 'Origin': ORIGIN, 'Referer': ENTRY_URL})
-        try:
-            current()
-            saved = cache.load(login_id, snapshot['phone']) if cache is not None and not force else None
+        saved = cache.load(login_id, snapshot['phone']) if cache is not None and not force else None
+        retained = cache.clients.get(login_id) if cache is not None else None
+        client = retained[1] if saved is not None and retained and retained[0] is saved else None
+        # curl's browser defaults describe a desktop document navigation;
+        # campaign calls are mobile AJAX, including restored SMS sessions.
+        if client is None:
+            client = session_factory() if session_factory else requests.Session(impersonate='chrome', default_headers=False, use_thread_local_curl=False)
             if saved:
                 for cookie in saved['cookies']:
                     client.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'], path=cookie['path'])
+                for cookie in client.cookies.jar:
+                    original = next(c for c in saved['cookies'] if (c['name'],c['domain'],c['path']) == (cookie.name,cookie.domain,cookie.path))
+                    cookie.secure, cookie.expires = original['secure'], original['expires']
+        client.headers.update(AJAX_HEADERS)
+        if saved:
+            client.headers.update(saved.get('headers', {}))
+        try:
+            current()
+            if saved:
                 yield client, snapshot
                 return
+            if snapshot.get('status', 'active') != 'active':
+                raise StarDayAuthError('共享 APP 登录不可用，请重新登录账号', 'APP_LOGIN_REQUIRED', 401)
             if not allow_login:
                 raise StarDayAuthError('等待每日凭据准备时间，或打开星动日页面后获取活动凭据。', 'CAMPAIGN_LOGIN_PENDING', 409)
             flow = AppLoginSession.from_credentials(snapshot)
@@ -131,13 +181,14 @@ def star_day_session(credentials_provider, *, session_factory=None, cache=None, 
             if not isinstance(value, dict) or str(value.get('status')) != '1':
                 code = str(value.get('status', 'unknown')) if isinstance(value, dict) else 'unknown'
                 if code == '-800':
-                    raise StarDayAuthError('官方提示请求频繁（-800），已停止后台重试，等待下一次定时准备。', 'UPSTREAM_RATE_LIMITED',429)
+                    raise StarDayAuthError(RATE_LIMIT_MESSAGE, 'UPSTREAM_RATE_LIMITED',429)
                 raise StarDayAuthError('星动日活动认证未通过（官方状态 '+code[:20]+'）；自动检查每日一次，此结果不代表 APP 登录失效。', 'AUTH_FAILED')
             if not any(cookie.name == 'access_token' and cookie.value for cookie in client.cookies.jar):
                 raise StarDayAuthError('星动日认证缺少活动会话', 'AUTH_FORMAT')
             current()
             if cache is not None:
-                cache.save(login_id, snapshot['phone'], client)
+                saved = cache.save(login_id, snapshot['phone'], client)
             yield client, snapshot
         finally:
-            client.close()
+            if cache is None or saved is None or not cache.retain(login_id, saved, client):
+                client.close()

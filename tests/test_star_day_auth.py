@@ -22,6 +22,9 @@ class StarDayAuthTests(unittest.TestCase):
             with star_day_session(lambda:deepcopy(self.snapshot),session_factory=lambda:self.client) as (client,snapshot):
                 self.assertIs(client,self.client)
                 self.assertEqual(snapshot['phone'],self.snapshot['phone'])
+                self.assertEqual(client.headers['X-Requested-With'],'XMLHttpRequest')
+                self.assertEqual(client.headers['Accept'],'application/json, text/javascript, */*; q=0.01')
+                self.assertEqual(client.headers['Sec-Fetch-Mode'],'cors')
         self.flow.call.assert_called_once_with(CHECK_UID_PATH,{'channelId':'12063','domain':ORIGIN,'url':ENTRY_URL,'tel':self.snapshot['phone'],'uId':'original-uid'})
         self.assertEqual(self.client.post.call_args.kwargs['data'],{'token':'encrypted-uid','sspId':'75628'})
         self.client.close.assert_called_once()

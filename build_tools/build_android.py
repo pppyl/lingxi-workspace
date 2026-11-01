@@ -21,9 +21,9 @@ def main():
     staging.mkdir(parents=True, exist_ok=True)
     modules = ('app app_login android_bridge android_runtime android_activity_bridge http_transport '
                'checkin_client checkin_flash checkin_scheduler coupon_client coupon_use coupon_captcha coupon_cashier_h5 coupon_alipay alipay_h5 '
-               'lingxi_client lingxi_scheduler login_storage credential_cache network_access monthly_coupon_auth monthly_coupon_client '
+               'lingxi_client lingxi_scheduler login_storage credential_cache network_access access_security monthly_coupon_auth monthly_coupon_client '
                'monthly_coupon_scheduler star_day_client star_day_auth star_day_scheduler star_day_sms star_day_crypto '
-               'platform_manager runtime_paths session_maintenance unified_logins').split()
+               'platform_manager runtime_paths session_maintenance unified_logins update_checker').split()
     for name in modules:
         source = ROOT / (name + '.py')
         if source.exists(): shutil.copy2(source, staging / source.name)

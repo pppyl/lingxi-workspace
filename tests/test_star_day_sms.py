@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from http_transport import requests
 from login_storage import DatabaseLoginStorage
 from recharge.cmcc import SHANGHAI
-from star_day_auth import StarDaySessionCache,StarDayAuthError,star_day_session
+from star_day_auth import StarDaySessionCache,StarDayAuthError,star_day_session,WEB_UA
 from star_day_crypto import sm3,encrypt_sms_phone,encrypt_login_value,P,A,PUBLIC
 from star_day_sms import StarDaySmsLogin
 from star_day_scheduler import StarDayScheduler
@@ -44,6 +44,8 @@ class SmsTests(unittest.TestCase):
         self.assertTrue(url.endswith('/new/cmpSmsSend.action'))
         data=self.client.post.call_args.kwargs['data']
         self.assertEqual(data['sspId'],'75628')
+        self.assertEqual(self.client.headers['User-Agent'],WEB_UA)
+        self.assertNotIn('leadeon/',self.client.headers['User-Agent'])
         self.assertNotIn(self.snapshot['phone'],data['phone'])
 
     def test_login_uses_same_sms_session_and_survives_primary_credential_rotation(self):
@@ -54,9 +56,11 @@ class SmsTests(unittest.TestCase):
         self.assertEqual(self.client.post.call_args.kwargs['data'],{
             'phone':encrypt_login_value(self.snapshot['phone']),'smsCode':encrypt_login_value('123456')})
         self.assertEqual(self.cache.load('a',self.snapshot['phone'])['expires_at'],self.stamp+7200)
+        self.client.close.assert_not_called()
         with patch('star_day_auth.AppLoginSession.from_credentials') as primary:
-            fresh=Mock(headers={},cookies=requests.Cookies())
-            with star_day_session(lambda:self.snapshot,session_factory=lambda:fresh,cache=self.cache,allow_login=False):pass
+            with star_day_session(lambda:self.snapshot,cache=self.cache,allow_login=False) as (client,_):
+                self.assertIs(client,self.client)
+                self.assertEqual(client.headers['User-Agent'],WEB_UA)
             primary.assert_not_called()
         self.assertNotIn('a',self.sms.pending)
 
@@ -116,6 +120,16 @@ class SmsTests(unittest.TestCase):
         self.assertNotIn('web-sms-private-token',public.text)
         self.assertNotIn('012345',public.text)
         self.assertEqual(self.client.post.call_count,2)
+        shared.mark(saved,'login_required','primary session ended')
+        public=http.get('/api/star-day/status')
+        self.assertEqual(public.json['accounts'][0]['status'],'active')
+        self.assertEqual(shared.public()[0]['status'],'login_required')
+        self.assertEqual(scheduler.sms_snapshot(saved.id)['phone'],saved.phone)
+        with patch('star_day_auth.AppLoginSession.from_credentials') as primary:
+            with star_day_session(lambda:scheduler.credentials(saved.id),cache=scheduler.sessions,allow_login=False):pass
+            primary.assert_not_called()
+        scheduler.sessions.forget(saved.id)
+        self.assertEqual(http.get('/api/star-day/status').json['accounts'][0]['status'],'login_required')
 
 
 if __name__=='__main__':unittest.main()

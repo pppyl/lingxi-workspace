@@ -185,7 +185,9 @@ class WebTests(unittest.TestCase):
 
     def test_origin_and_host_validation(self):
         self.assertEqual(self.client.post("/api/login/sms", json={}, headers={"Origin": "https://unrelated.example"}).status_code, 403)
-        self.assertEqual(self.client.get("/api/status", base_url="http://unrelated.example").status_code, 403)
+        response = self.client.get("/api/status", base_url="http://unrelated.example")
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.json['code'], 'ACCESS_SETUP_REQUIRED')
 
     def test_not_logged_in_and_message_validation(self):
         self.assertEqual(self.client.post("/api/chat", json={"message": "你好"}).status_code, 401)

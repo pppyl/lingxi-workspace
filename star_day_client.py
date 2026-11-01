@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 import math
 import hashlib
+import logging
 from queue import SimpleQueue
 import re
 import time
@@ -16,7 +17,7 @@ from http_transport import requests
 from checkin_client import CheckinError
 from checkin_flash import run_flash_burst
 from recharge.cmcc import SHANGHAI
-from star_day_auth import star_day_session, StarDayAuthError
+from star_day_auth import star_day_session, StarDayAuthError, explain_rate_limit
 
 ORIGIN = 'https://qqt.cmicrwx.cn'
 BASE = ORIGIN+'/2016tyjf/xhmqqthy'
@@ -36,7 +37,7 @@ class StarDayClient:
         self.session_factory = session_factory
         self.session_cache = session_cache
         self.allow_login, self.prepare_time = allow_login, prepare_time
-        self.worker_session_factory = worker_session_factory or (lambda: requests.Session(impersonate='chrome', use_thread_local_curl=False))
+        self.worker_session_factory = worker_session_factory or (lambda: requests.Session(impersonate='chrome', default_headers=False, use_thread_local_curl=False))
         self.clock = None
 
     @contextmanager
@@ -77,7 +78,9 @@ class StarDayClient:
 
     def _request(self, client, path, *, data=None, json=None, writing=False):
         try:
-            response = client.post(BASE+path, data=data, json=json, timeout=(10, 20), allow_redirects=False) if data is not None or json is not None else client.get(BASE+path, timeout=(10, 20), allow_redirects=False)
+            response = client.post(BASE+path, data=data, json=json,
+                headers={'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'} if data is not None else {},
+                timeout=(10, 20), allow_redirects=False) if data is not None or json is not None else client.get(BASE+path, timeout=(10, 20), allow_redirects=False)
         except requests.RequestsError as error:
             raise StarDayError('请求中断，提交结果待核实。' if writing else '连接星动日服务失败，请稍后重试。',
                 'RESULT_UNCERTAIN' if writing else 'UPSTREAM_NETWORK', uncertain=writing) from error
@@ -94,6 +97,8 @@ class StarDayClient:
             raise StarDayError('官方响应格式异常，请在 APP 核实结果。', 'UPSTREAM_FORMAT', uncertain=writing) from error
         if not isinstance(value, dict) or 'status' not in value:
             raise StarDayError('官方响应格式异常，请在 APP 核实结果。', 'UPSTREAM_FORMAT', uncertain=writing)
+        if str(value['status']) == '-800':
+            logging.getLogger(__name__).warning('Star Day upstream rate limit at %s', path)
         return value
 
     @staticmethod
@@ -101,7 +106,7 @@ class StarDayClient:
         code = str(value['status'])
         if code != '1':
             message = str(value.get('msg') or '官方暂未允许此操作')[:300]
-            raise StarDayError(message, code[:40], rejected=writing)
+            raise StarDayError(explain_rate_limit(message, code), code[:40], rejected=writing)
         return value.get('data')
 
     def _now(self):
@@ -354,6 +359,8 @@ class StarDayClient:
                             code, message = str(value['status']), str(value.get('msg') or '官方暂未允许领取')[:300]
                             if code == '1':
                                 return {'state':'success', 'message':('赠送成功 · '+recipient_label+'，权益将在24小时内下发。') if recipient is not None else '权益领取成功，官方将在24小时内下发。', 'code':code}
+                            if code == '-800':
+                                return {'state':'terminal', 'message':explain_rate_limit(message, code), 'code':code}
                             if code == '15':
                                 return {'state':'terminal', 'message':'本月已领取该权益，请核对官方领取记录。', 'code':'PRIZE_LIMIT_MONTH'}
                             # Only explicit, definite temporary refusals authorize

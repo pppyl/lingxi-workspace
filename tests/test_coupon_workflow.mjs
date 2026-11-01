@@ -26,7 +26,7 @@ async function fixture(mode,options={}) {
   get('coupons-use-verification').append(new Element('p'));
   get('coupons-category').value='all';
   const pending=options.pendingOrders||(mode==='payment'?[{order_id:'existing-order',coupon_name:'fixture',amount:'30'}]:[]);
-  const card={id:'coupon',name:'fixture',use_kind:['exchange','rights'].includes(mode)?mode:'recharge',category:mode==='rights'?'flow':'fee',status:'available'};
+  const card={id:'coupon',name:'fixture',use_kind:['exchange','rights','flow'].includes(mode)?mode:'recharge',category:['rights','flow'].includes(mode)?'flow':'fee',status:'available'};
   let loggedIn=false,loginAttempts=0,prepareCount=0,accepted=false;
   const http=async(url,fetchOptions)=>{
     const body=fetchOptions?.body?JSON.parse(fetchOptions.body):undefined;calls.push({url,body});
@@ -53,6 +53,8 @@ async function fixture(mode,options={}) {
     }
     else if(url==='/api/coupons/use/prepare'){
       if(options.prepareAuth&&!loggedIn){status=401;result={code:'APP_LOGIN_REQUIRED',error:'请重新登录'};}
+      else if(options.usedHistory)result={state:'accepted',message:'官方历史已确认使用'};
+      else if(options.unknownSubmission&&!body.retry)result={state:'unconfirmed',can_retry:true,message:'官方当前仍显示此券可用，请核实上次结果。'};
       else result={operation_id:++prepareCount===1?'operation':'operation-'+prepareCount,kind:card.use_kind,choices:[{value:'30',label:'充值30元'}]};
     }
     else if(url==='/api/coupons/use/confirm'||url==='/api/coupons/use/payment') {
@@ -61,7 +63,7 @@ async function fixture(mode,options={}) {
         result={state:'failed',code:options.failedResultCode,message:'官方检测到充值环境异常，本次未生成支付订单。'};
       }else if(options.errorCode&&(!loggedIn||options.repeatError)){
         status=409;result={code:options.errorCode,error:'需要验证'};
-      }else if(['exchange','rights'].includes(mode))result=body.prepare_risk?{state:'risk_required',sdk_server:'/coupon-verification/wallet/udid/c1?operation_id=operation'}:{state:'accepted',message:'兑换申请已受理'};
+      }else if(['exchange','rights','flow'].includes(mode))result=body.prepare_risk?{state:'risk_required',sdk_server:'/coupon-verification/wallet/udid/c1?operation_id=operation'}:{state:'accepted',message:'兑换申请已受理'};
       else result=(options.readyPayment||loggedIn||body.captcha_token||(url==='/api/coupons/use/payment'&&mode==='submission'))?{state:'payment_required',order_id:'existing-order',amount:'30.00',payment_url:'https://mclient.alipay.com/cashierRoutePay.htm?fixture',qr_image:'fixture-qr'}:
         {state:'verification_required',verification:'captcha',message:'请人工验证',challenge:{app_id:'provider-app',risk_id:'provider-risk'}};
     } else throw new Error('Unexpected API '+url);
@@ -86,8 +88,8 @@ async function fixture(mode,options={}) {
   let submission;
   if(mode==='payment')await walk(get('coupons-pending-list'),'继续支付').click();
   else {
-    await walk(get('coupons-list'),mode==='exchange'?'兑换话费':mode==='rights'?'兑换流量':'充值使用').click();
-    submission=get('coupons-use-form').requestSubmit();if(!['exchange','rights'].includes(mode))await submission;
+    await walk(get('coupons-list'),mode==='exchange'?'兑换话费':['rights','flow'].includes(mode)?'兑换流量':'充值使用').click();
+    submission=get('coupons-use-form').requestSubmit();if(!['exchange','rights','flow'].includes(mode))await submission;
   }
   return {get,calls,events,submission,timers};
 }
@@ -275,7 +277,7 @@ test('official SDK initialization failure keeps verified SMS and allows retry wi
   assert.match(get('coupons-use-error').textContent,/官方用券校验未完成/);
 });
 
-for(const mode of ['exchange','rights'])test(`${mode}: accepted exchange closes popup, refreshes list and fades success toast after three seconds`,async()=>{
+for(const mode of ['exchange','rights','flow'])test(`${mode}: accepted exchange closes popup, refreshes list and fades success toast after three seconds`,async()=>{
   const {get,calls,submission,timers}=await fixture(mode);await submission;
   assert.equal(get('coupons-use').open,false);
   assert.equal(get('coupons-toast').hidden,false);
@@ -347,4 +349,19 @@ test('refresh updates other account counts and accepted exchange refreshes selec
   const exchanged=await fixture('exchange',{consumeOnAccepted:true});await exchanged.submission;
   await new Promise(resolve=>setImmediate(resolve));
   assert.match(renderedText(exchanged.get('coupons-accounts')),/可用 0 张/);
+});
+
+test('unknown previous submission is rechecked without replay and retry preparation needs a click',async()=>{
+  const env=await fixture('flow',{unknownSubmission:true,onlyCounts:true});
+  const find=node=>node.textContent==='兑换流量'?node:node.children.map(find).find(Boolean);
+  const use=find(env.get('coupons-list'));
+  await use.click();
+  assert.equal(env.get('coupons-use-recheck').hidden,false);
+  assert.equal(env.get('coupons-use-retry').hidden,false);
+  assert.equal(env.calls.some(call=>call.url==='/api/coupons/use/confirm'),false);
+  await env.get('coupons-use-recheck').click();
+  assert.equal(env.calls.some(call=>call.body?.retry),false);
+  await env.get('coupons-use-retry').click();
+  assert.equal(env.calls.at(-1).body.retry,true);
+  assert.equal(env.calls.some(call=>call.url==='/api/coupons/use/confirm'),false);
 });

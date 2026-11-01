@@ -102,6 +102,16 @@ def _date(value):
 
 
 RECHARGE_CARD_TYPES = frozenset(('001', '002', '003', '005', '007', '008', '009'))
+COUPON_PROTOCOLS = {
+    'exchange': {'business':'hf01', 'card_types':frozenset(('004',)), 'category':None,
+                 'submit_path':'/i/v1/pay/saveorder/', 'sms_template':None, 'pending_codes':()},
+    'recharge': {'business':'hf01', 'card_types':RECHARGE_CARD_TYPES, 'category':None,
+                 'submit_path':'/i/v1/pay/saveorderh5/', 'sms_template':None, 'pending_codes':()},
+    'rights': {'business':'qy01', 'card_types':frozenset(('004',)), 'category':'ll01',
+               'submit_path':'/i/v1/cust/rightsCouponsUse/', 'sms_template':'05', 'pending_codes':('550023',)},
+    'flow': {'business':'ll01', 'card_types':frozenset(('001',)), 'category':None,
+             'submit_path':'/i/v1/cust/flow/coupongive/', 'sms_template':'03', 'pending_codes':('571001',)},
+}
 
 
 def _item(row):
@@ -116,10 +126,9 @@ def _item(row):
     use_kind = ''
     if state == 'available' and str(row.get('cardVersion')) == '2':
         card_type = str(row.get('pCardType'))
-        if business == 'hf01':
-            use_kind = 'exchange' if card_type == '004' else 'recharge' if card_type in RECHARGE_CARD_TYPES else ''
-        elif business == 'qy01' and category == 'll01' and card_type == '004':
-            use_kind = 'rights'
+        use_kind = next((name for name, protocol in COUPON_PROTOCOLS.items()
+            if business == protocol['business'] and card_type in protocol['card_types']
+            and (protocol['category'] is None or category == protocol['category'])), '')
     identity = json.dumps([row.get(k) for k in ('pCardNo', 'pcardId', 'stallName', 'expireTime')], ensure_ascii=False)
     return {'id': hashlib.sha256(identity.encode()).hexdigest()[:24],
             'name': str(row.get('stallName') or '未命名卡券'),

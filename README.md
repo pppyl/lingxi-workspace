@@ -2,11 +2,23 @@
 
 Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
-电脑上的源码服务及 Windows 启动入口默认监听全部 IPv4 网卡，同一局域网设备可通过 `http://电脑的局域网IP:5500/` 访问，例如 `http://192.168.31.176:5500/`。各设备共用这台电脑保存的账号池和自动任务，服务仍在这台电脑执行。Windows 防火墙需允许 TCP 5500 的局域网入站连接；管理员可运行 `allow-lan.ps1` 配置该端口规则。如需只允许本机访问，可设置环境变量 `LINGXI_HOST=127.0.0.1` 后启动。
+电脑上的源码服务及 Windows 启动入口默认同时监听 IPv4 和 IPv6 的 5500 端口。其他设备可通过 `http://电脑的IPv4地址:5500/` 或 `http://[电脑的IPv6地址]:5500/` 访问，例如 `http://192.168.31.176:5500/`。各设备共用这台电脑保存的账号池和自动任务，服务仍在这台电脑执行。Windows 防火墙需允许 TCP 5500 的入站连接；管理员可运行 `allow-lan.ps1` 放行局域网访问。如需只允许本机访问，可设置环境变量 `LINGXI_HOST=127.0.0.1` 后启动。
+
+支持 IPv4、IPv6 及指向此服务的合法域名。IPv6 地址直接访问时需使用方括号，例如 `http://[IPv6地址]:5500/`；域名可直接使用 `http://你的域名:5500/`。域名访问按远程访问验证，即使经本机反向代理转发，也不能绕过密码。
+
+本机回环访问（`127.0.0.1`／`::1`）无需访问密码。非本机访问首次进入时必须先设置至少 8 位的访问密码，之后使用该密码登录；也可提前在「平台管理 → 访问密码」设置。密码以加盐哈希保存，不保存明文。修改密码需要输入当前密码，其他设备的旧登录随即失效，当前设备保留登录。远程访问登录最长保留 7 天。
+
+错误尝试后依次等待 5、10、30、60、120、180、300 秒，之后每次最多等待 5 分钟。等待由服务端统一执行并保存，跨 IP、IPv4／IPv6、刷新页面、清除 Cookie 或重启服务都不能绕过；等待期间的请求不会延长等待。正确登录后重置错误次数。此规则同样用于验证修改密码时输入的旧密码，已登录设备的业务和后台任务不受等待影响。
+
+版本检测使用 `pppyl/lingxi-workspace` 的 GitHub 正式 Release。服务启动后检查，之后每 6 小时检查一次；结果及 ETag 保存在本地数据库，重启和页面刷新复用缓存。界面右上角显示当前版本，发现新版时显示提示；「平台管理 → 版本更新」可手动检查、查看更新内容并下载对应的 Windows EXE、安卓 APK 或源码 ZIP。手动检查至少间隔一分钟，多设备共用同一次检查；网络失败会提示，不会误报“已是最新”。
+
+更新需要用户下载安装：Windows 先退出托盘旧客户端，再运行新版；安卓使用同一签名覆盖安装，保留数据；源码服务更新程序文件时保留本地数据目录。程序不会自动覆盖正在运行的文件或清除账号、凭据及任务。
 
 ## Windows 客户端下载
 
-直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 Windows x64 单文件版 EXE，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 ZIP 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
+卡券使用按官方协议类型复用，不按面额逐张适配。不同兑换接口、短信模板及待核实记录的处理见 [卡券兑换协议](COUPON_PROTOCOLS.md)。
+
+直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.4.0-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.4.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
 
 关闭标签页后客户端留在托盘继续执行定时任务，再次运行时复用已打开的页面，右键托盘图标可退出。启动时确认本地页面可访问后才打开浏览器；客户端 Cookie 名称与源码网页服务分离。账号及任务保存在 `%LOCALAPPDATA%\LingxiWorkspace`，与程序文件分离，升级无需搬运账号库。更新前先退出旧版本，首次使用登录自己的手机号。详细说明见 [DESKTOP.md](DESKTOP.md)。
 
@@ -14,7 +26,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 ## Android 独立版下载
 
-在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.3.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
+在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.4.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
 
 ## 页面与使用
 
@@ -183,7 +195,7 @@ npm install --prefix recharge
 | POST /api/conversation/new | 创建新对话 |
 | POST /api/logout | 清除登录态 |
 
-程序只监听本机。端口可通过 LINGXI_PORT 覆盖，默认 5500。
+程序默认同时监听全部 IPv4／IPv6 网卡，远程访问需要访问密码。端口可通过 LINGXI_PORT 覆盖，默认 5500。
 
 ## 检查
 
@@ -204,7 +216,7 @@ node --test tests/test_lingxi_task_model.mjs
 
 ## Android 独立版
 
-下载发布页中的 `LingxiWorkspace-1.1.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
+下载发布页中的 `LingxiWorkspace-1.4.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
 
 登录凭据使用 Android Keystore 加密，Windows 仍使用 DPAPI。两端各自保存数据，不会把发布者账号打包，也不自动复制电脑的登录态。同一手机号遵循运营商的单点登录规则。付款始终由用户在官方 APP 手动完成。
 

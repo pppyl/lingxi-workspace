@@ -2,6 +2,12 @@
   'use strict';
   const page = document.body.dataset.workspace;
   if (!page) return;
+  const workspaceFetch=window.fetch.bind(window);
+  window.fetch=async(...args)=>{
+    const response=await workspaceFetch(...args);
+    if(response.headers.get('X-Workspace-Access'))location.replace('/access?next='+encodeURIComponent(location.pathname+location.search));
+    return response;
+  };
   const localHost=['localhost','127.0.0.1','[::1]'].includes(location.hostname);
   if(new URLSearchParams(location.search).get('desktop')==='1')sessionStorage.setItem('desktop-client','1');
   if(localHost&&sessionStorage.getItem('desktop-client')==='1')import('/static/desktop-window.js');
@@ -44,7 +50,7 @@
     <a href="/platforms" class="workspace-nav-item${page === 'platforms' ? ' active' : ''}"${page === 'platforms' ? ' aria-current="page"' : ''}>${icon('grid')}<span>平台管理</span></a>
     <div class="workspace-nav-footer"><span class="workspace-service-dot"></span><div>本地服务<small id="workspace-host"></small></div><span class="workspace-private">本机</span></div>`;
   nav.querySelector('#workspace-host').textContent = location.host;
-  nav.querySelector('.workspace-private').textContent = localHost?'本机':'局域网';
+  nav.querySelector('.workspace-private').textContent = localHost?'本机':'远程';
   const current = pages.find(item => item[0] === page);
   const topbar = document.createElement('header'); topbar.className = 'workspace-topbar';
   topbar.innerHTML = `<div class="workspace-location"><button class="workspace-menu" aria-label="展开导航" aria-controls="workspace-navigation" aria-expanded="false" type="button">${icon('menu')}</button><span class="workspace-location-root">工作空间</span><span class="workspace-location-divider">/</span>${currentGroup ? `<span class="workspace-location-parent">${currentGroup.title}</span><span class="workspace-location-divider">/</span>` : ''}<strong></strong></div><div class="workspace-topbar-actions"><span class="workspace-local"><i></i>本地运行</span><button type="button" class="workspace-account-button" data-account-window><span class="workspace-account-avatar">${icon('users')}</span><span>共享账号</span><span class="workspace-chevron">⌄</span></button></div>`;
@@ -61,6 +67,7 @@
   nav.addEventListener('click',event => { if(event.target.closest('[data-account-window]') && document.body.classList.contains('workspace-nav-open')) toggleNavigation(); });
   document.addEventListener('keydown',event => { if(event.key === 'Escape' && document.body.classList.contains('workspace-nav-open')) toggleNavigation(); });
   document.body.prepend(nav, topbar, shade);
+  import('/static/updates.js');
 
   const seasonalNavigation = nav.querySelector('#workspace-activity-navigation');
   let seasonalTimer;

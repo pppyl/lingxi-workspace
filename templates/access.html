@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>访问验证 · 本地工具台</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/access.css">
+  <script src="/static/access.js" defer></script>
+</head>
+<body class="access-page">
+  <main class="access-card">
+    <div class="access-brand"><span aria-hidden="true">◇</span> 本地工具台</div>
+    <h1 id="access-title">访问验证</h1>
+    <p id="access-description">正在检查访问状态…</p>
+    <form id="access-form" data-view="login" hidden>
+      <label class="access-field" id="access-current-field" hidden>当前访问密码<input id="access-current-password" type="password" autocomplete="current-password" maxlength="128"></label>
+      <label class="access-field"><span id="access-password-label">访问密码</span><input id="access-password" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <label class="access-field" id="access-confirmation-field" hidden>确认密码<input id="access-confirmation" type="password" autocomplete="new-password" maxlength="128"></label>
+      <p id="access-feedback" class="access-feedback" role="alert" hidden></p>
+      <button id="access-submit" class="access-primary" type="submit">登录</button>
+    </form>
+    <p class="access-note">远程设备共用此服务的账号和任务。访问密码可在平台管理中修改。</p>
+  </main>
+</body>
+</html>

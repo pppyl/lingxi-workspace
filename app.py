@@ -34,7 +34,8 @@ from coupon_client import CouponError, SORTS as COUPON_SORTS
 from coupon_use import CouponUseManager
 from coupon_captcha import register_coupon_captcha
 from runtime_paths import DATA_DIR,RECHARGE_DATA_DIR
-from network_access import allowed_lan_host
+from access_security import AccessGate, register_access
+from update_checker import register_updates
 
 
 def create_app(*, enable_recharge=False, recharge_manager=None, recharge_scheduler=None, database_path=None, recharge_data_dir=None):
@@ -53,6 +54,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     lingxi_auth_locks = {}
     login_flows: dict[str, AppLoginSession] = {}
     database = DatabaseLoginStorage(database_path) if database_path is not None else None
+    access_security = register_access(app, database)
+    register_updates(app, database)
     credential_cache = CredentialCache(database)
     app.extensions['credential_cache'] = credential_cache
     unified = UnifiedLogins(database)
@@ -213,8 +216,6 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
     @app.before_request
     def local_network_access():
-        if not allowed_lan_host(request.host):
-            return jsonify(error="仅支持本机或局域网 IP 访问。"), 403
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if origin and urlsplit(origin).netloc != request.host:
@@ -333,7 +334,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if saved is None:
             raise CouponError('请选择账号及卡券。', 'INVALID_SELECTION', 400)
         with unified.phone_lock(saved.phone):
-            return jsonify(coupon_uses.prepare(saved.id, payload.get('coupon_id', '')))
+            return jsonify(coupon_uses.prepare(saved.id, payload.get('coupon_id', ''), retry=payload.get('retry', False)))
 
     @app.post('/api/coupons/use/sms')
     def coupon_use_sms():
@@ -919,7 +920,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                                       app_login_provider=current_app_login, app_logout_provider=forget_app_login,
                                       app_accounts_provider=unified.public, app_credentials_provider=shared_credentials,credential_cache=credential_cache,
                                       app_prepare_provider=prepare_recharge_account)
-        recharge.config.update(SESSION_COOKIE_NAME='recharge_session', SESSION_COOKIE_PATH='/recharge')
+        recharge.config.update(SESSION_COOKIE_NAME='recharge_session', SESSION_COOKIE_PATH='/recharge', WORKSPACE_ACCESS_GUARDED=True)
         app.extensions['recharge_app'] = recharge
         app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {'/recharge': recharge})
 
@@ -1079,9 +1080,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     def star_credentials(login_id):
         with unified.lock:
             saved = unified.get_id(login_id)
-            if saved is None or saved.status != 'active':
+            if saved is None:
                 raise StarDayError('共享账号需要重新登录，请在账号管理填写验证码。', 'APP_LOGIN_REQUIRED', 401)
-            return {**unified.credentials(login_id), 'id':login_id}
+            return {**unified.credentials(login_id), 'id':login_id, 'status':saved.status}
 
     star_scheduler = StarDayScheduler(star_credentials, unified.public, storage=database)
     app.extensions['star_day_scheduler'] = star_scheduler
@@ -1096,6 +1097,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                                 storage=database, credentials=activity_credentials, accounts=unified.public)
     app.extensions['platform_manager'] = platforms
     app.extensions['session_maintenance'] = SessionMaintenance(unified, maintain_login)
+    app.wsgi_app = AccessGate(app.wsgi_app, access_security)
     return app
 
 
@@ -1103,6 +1105,7 @@ app = create_app(enable_recharge=True, database_path=DATA_DIR/'accounts.sqlite3'
 
 if __name__ == "__main__":
     port = int(os.environ.get("LINGXI_PORT", "5500"))
+    app.extensions['update_checker'].start()
     app.extensions['session_maintenance'].start()
     app.extensions['lingxi_scheduler'].start()
     app.extensions['checkin_scheduler'].start()
@@ -1110,4 +1113,7 @@ if __name__ == "__main__":
     app.extensions['star_day_scheduler'].start()
     app.extensions['platform_manager'].start()
     app.extensions['recharge_app'].extensions['scheduler'].start()
-    app.run(host=os.environ.get('LINGXI_HOST','0.0.0.0'), port=port, threaded=True, debug=False, use_reloader=False)
+    from network_access import create_http_server
+    server = create_http_server(app, port)
+    print(f'本地工具台已启动：IPv4 http://127.0.0.1:{server.effective_port}/ · IPv6 http://[::1]:{server.effective_port}/', flush=True)
+    server.run()

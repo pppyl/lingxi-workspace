@@ -86,8 +86,8 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
 
     @app.before_request
     def local_access():
-        if not allowed_lan_host(request.host):
-            return jsonify(error='仅支持本机或局域网 IP 访问。', code='LOCAL_ONLY'), 403
+        if not app.config.get('WORKSPACE_ACCESS_GUARDED') and not allowed_lan_host(request.host):
+            return jsonify(error='访问地址格式不正确。', code='INVALID_HOST'), 403
         origin = request.headers.get('Origin')
         if origin and urlsplit(origin).netloc != request.host:
             return jsonify(error='请求来源无效', code='ORIGIN_REJECTED'), 403

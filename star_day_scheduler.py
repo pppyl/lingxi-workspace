@@ -10,7 +10,7 @@ from threading import Event, RLock, Thread
 from login_storage import LoginStorageError
 from recharge.cmcc import SHANGHAI
 from star_day_client import StarDayClient, StarDayError
-from star_day_auth import StarDaySessionCache
+from star_day_auth import StarDaySessionCache, explain_rate_limit
 from star_day_sms import StarDaySmsLogin
 
 
@@ -38,11 +38,13 @@ class StarDayScheduler:
                     if not isinstance(saved, dict) or any(not isinstance(saved.get(k), dict) for k in self.data):
                         raise LoginStorageError('星动日数据格式无效，已保留原数据库。')
                     self.data = saved
-                known = {a['id'] for a in self.accounts()}
+                known = {a['id'] for a in self.activity_accounts()}
                 changed = deepcopy(self.data)
                 changed['settings'].setdefault('session_prepare_time', '09:30')
                 changed['accounts'] = {k: v for k, v in changed['accounts'].items() if k in known}
                 for record in changed['accounts'].values():
+                    if record.get('query_state') == 'auth_failed' and record.get('error_code') in ('-800', 'UPSTREAM_RATE_LIMITED'):
+                        record['query_state'] = 'rate_limited'
                     reason = self._daily_retry_reason(record)
                     if reason and not record.get('retry_at'):
                         record.update(retry_at=self._tomorrow(changed['settings']['session_prepare_time']), retry_reason=reason)
@@ -75,6 +77,15 @@ class StarDayScheduler:
         if self.storage is not None:
             self.storage.save_star_day_data(data)
         self.data = data
+
+    def activity_accounts(self):
+        accounts = self.accounts()
+        for account in accounts:
+            if account['status'] != 'active':
+                snapshot = self.credentials(account['id'])
+                if self.sessions.load(account['id'], snapshot['phone']) is not None:
+                    account['status'] = 'active'
+        return accounts
 
     def _record(self, data, login_id):
         return data['accounts'].setdefault(login_id, {'observation': {}, 'history': [],
@@ -129,7 +140,7 @@ class StarDayScheduler:
 
     def open_page(self):
         """A foreground page entry may establish a missing campaign login."""
-        for account in self.accounts():
+        for account in self.activity_accounts():
             if account['status'] != 'active' or self._deferred(account['id']):
                 continue
             snapshot = self.credentials(account['id'])
@@ -139,7 +150,7 @@ class StarDayScheduler:
                 self._queue(account['id'], 'inspect')
 
     def sms_snapshot(self, login_id):
-        if not isinstance(login_id,str) or not any(a['id'] == login_id for a in self.accounts()):
+        if not isinstance(login_id,str) or not any(a['id'] == login_id for a in self.activity_accounts()):
             raise StarDayError('请选择共享账号池中的账号。', 'INVALID_SELECTION',400)
         return {**self.credentials(login_id),'id':login_id}
 
@@ -157,7 +168,7 @@ class StarDayScheduler:
         return result
 
     def products(self):
-        account = next((a for a in self.accounts() if a['status'] == 'active'), None)
+        account = next((a for a in self.activity_accounts() if a['status'] == 'active'), None)
         if account is None:
             raise StarDayError('请先登录一个有效账号，再读取官方权益列表。', 'APP_LOGIN_REQUIRED', 401)
         products = self.client_factory(lambda: self.credentials(account['id'])).products()
@@ -171,7 +182,7 @@ class StarDayScheduler:
                 return {'state':'running'}
             self.calibrating = True
         try:
-            account = next((a for a in self.accounts() if a['status'] == 'active'
+            account = next((a for a in self.activity_accounts() if a['status'] == 'active'
                 and not self.data['accounts'].get(a['id'], {}).get('retry_at')), None)
             if account is None:
                 raise StarDayError('暂无可校准账号；资格或认证检查已暂停至次日，未重复请求。', 'DAILY_CHECK_DEFERRED', 409)
@@ -228,7 +239,7 @@ class StarDayScheduler:
             raise StarDayError('此权益未在当前官方列表中，请刷新后选择。', 'PRODUCT_MISSING', 409)
         if recipient is not None and not product.get('transferable'):
             raise StarDayError('官方不支持赠送此权益。', 'NOT_TRANSFERABLE', 409)
-        known = {a['id']:a for a in self.accounts()}
+        known = {a['id']:a for a in self.activity_accounts()}
         ids = payload.get('login_ids', [a['id'] for a in known.values() if a['status'] == 'active'])
         if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in known for i in ids):
             raise StarDayError('请选择需要抢购的账号。', 'INVALID_SELECTION', 400)
@@ -282,7 +293,7 @@ class StarDayScheduler:
             self.starts.pop(job_id, None)
 
     def run(self, ids=None, *, inspect=False):
-        known = {a['id']: a for a in self.accounts()}
+        known = {a['id']: a for a in self.activity_accounts()}
         if ids is None:
             ids = [a['id'] for a in known.values() if a['status'] == 'active']
         if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in known for i in ids):
@@ -295,7 +306,7 @@ class StarDayScheduler:
         return f'已安排 {count} 个账号核对并签到，今日已签到的账号不会重复提交。'
 
     def gift_options(self, login_id):
-        account = next((a for a in self.accounts() if a['id'] == login_id), None)
+        account = next((a for a in self.activity_accounts() if a['id'] == login_id), None)
         if account is None or account['status'] != 'active':
             raise StarDayError('请选择已登录的来源账号。', 'APP_LOGIN_REQUIRED', 401)
         return self.client_factory(lambda:self.credentials(login_id)).gift_options()
@@ -306,7 +317,7 @@ class StarDayScheduler:
                 return False
             changed = deepcopy(self.data)
             record = self._record(changed, login_id)
-            account = next(a for a in self.accounts() if a['id'] == login_id)
+            account = next(a for a in self.activity_accounts() if a['id'] == login_id)
             if kind == 'prepare':
                 record['prepared_date'] = self.now().date().isoformat()
             if kind in ('signin','prepare'):
@@ -398,13 +409,14 @@ class StarDayScheduler:
                 break
             except (StarDayError, LoginStorageError) as error:
                 code = getattr(error, 'code', '')
-                auth_failed = code in ('AUTH_FAILED', 'APP_UID_FAILED', 'APP_CREDENTIALS_CHANGED', '-800', 'UPSTREAM_RATE_LIMITED')
+                rate_limited = code in ('-800', 'UPSTREAM_RATE_LIMITED')
+                auth_failed = code in ('AUTH_FAILED', 'APP_UID_FAILED', 'APP_CREDENTIALS_CHANGED')
                 # A changed snapshot can be read once more. A campaign denial
                 # must never force a primary APP identity refresh.
                 if code == 'APP_CREDENTIALS_CHANGED' and attempt == 0 and not submitted:
                     continue
-                result = {'state': 'waiting_session' if code == 'CAMPAIGN_LOGIN_PENDING' else 'stopped' if code == 'JOB_STOPPED' else 'login_required' if getattr(error, 'status', None) == 401 else 'auth_failed' if auth_failed else 'failed',
-                          'code':code, 'message': str(error), 'uncertain': bool(submitted) and not getattr(error, 'rejected', False)}
+                result = {'state': 'waiting_session' if code == 'CAMPAIGN_LOGIN_PENDING' else 'stopped' if code == 'JOB_STOPPED' else 'login_required' if getattr(error, 'status', None) == 401 else 'rate_limited' if rate_limited else 'auth_failed' if auth_failed else 'failed',
+                          'code':code, 'message': explain_rate_limit(str(error), code), 'uncertain': bool(submitted) and not getattr(error, 'rejected', False)}
                 break
         with self.lock:
             changed = deepcopy(self.data)
@@ -443,7 +455,7 @@ class StarDayScheduler:
                          'message': record['message'], 'attempt_count': result.get('attempt_count', 0),
                          'attempts': result.get('attempts', [])}
                 record['history'] = [*record['history'], event][-90:]
-                if result.get('state') in ('failed', 'auth_failed', 'skipped', 'login_required', 'stopped') and not result.get('uncertain'):
+                if result.get('state') in ('failed', 'auth_failed', 'rate_limited', 'skipped', 'login_required', 'stopped') and not result.get('uncertain'):
                     for key in submitted:
                         changed['actions'].pop(key, None)
             if job_id is not None and job_id in changed['jobs']:
@@ -456,7 +468,7 @@ class StarDayScheduler:
             self.checked[login_id] = self.now()
 
     def status(self):
-        accounts, now = self.accounts(), self.now()
+        accounts, now = self.activity_accounts(), self.now()
         with self.lock:
             for account in accounts:
                 record = self.data['accounts'].get(account['id'], {})
@@ -483,6 +495,9 @@ class StarDayScheduler:
                     account['next_run_at'] = account['retry_at']
                 elif account['state'] == 'waiting_session':
                     account['next_run_at'] = self._next(self.data['settings']['session_prepare_time'])
+                account['message'] = explain_rate_limit(account['message'], account['error_code'])
+                for event in account['history']:
+                    event['message'] = explain_rate_limit(event.get('message', ''), event.get('code', ''))
             jobs = deepcopy(list(self.data['jobs'].values()))
             names = {a['id']: a.get('name') or a['phone_masked'] for a in accounts}
             for job in jobs:
@@ -490,12 +505,13 @@ class StarDayScheduler:
                 job.pop('recipient', None)
                 for login_id, result in job['results'].items():
                     result['account_name'] = names.get(login_id, '已退出账号')
+                    result['message'] = explain_rate_limit(result.get('message', ''), result.get('code', ''))
             return {'accounts': accounts, 'settings': deepcopy(self.data['settings']),
                     'products': deepcopy(self.catalog), 'jobs': jobs, 'server_time': now.isoformat(), 'warning': self.warning,
                     'calibration':{'state':'running'} if self.calibrating else deepcopy(self.calibration)}
 
     def tick(self):
-        accounts, now = self.accounts(), self.now()
+        accounts, now = self.activity_accounts(), self.now()
         previous, self.readiness = self.readiness, {a['id']: (a['status'], a.get('credential_revision', 0)) for a in accounts}
         with self.lock:
             if self.load_error:

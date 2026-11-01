@@ -4,13 +4,13 @@
   const categories = {fee:'话费券',flow:'流量券',other:'其他卡券'};
   const accountStates = {active:'已登录',login_required:'需重新登录',restoring:'正在恢复',retry:'等待重连'};
   const couponStates = {available:'可使用',used:'已使用',expired:'已过期',unavailable:'不可使用',invalid:'已失效','官方状态 9':'已锁定／占用'};
-  const useNames = {exchange:'兑换话费',recharge:'充值使用',rights:'兑换流量'};
+  const useNames = {exchange:'兑换话费',recharge:'充值使用',rights:'兑换流量',flow:'兑换流量'};
   const formatter = new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
   let accounts = [], loginId = '', state = 'available', availableSort = 'default', items = [], page = 0, total = null, hasMore = false, loading = false, refreshing = false, queryFailed = false, requestVersion = 0;
   let useOperation = null, useBusy = false, useConfirming = false, useSubmitted = false, useGeneration = 0;
   let captchaToken = '', captchaRequired = false;
   let pendingOrders = [], paymentOrder = '';
-  let useItem = null, relogin = null, reloginTimer = null;
+  let useItem = null, relogin = null, reloginTimer = null, useRecheck = null;
   const loginSmsCooldowns = new Map();
   const loginRequiredCodes = ['ALIPAY_RELOGIN_REQUIRED','APP_LOGIN_REQUIRED','COUPON_LOGIN_REQUIRED','500003','531022'];
   let exchangeRiskToken = '', riskSdk = null;
@@ -194,6 +194,10 @@
   }
 
   function renderUseControls(){
+    $('coupons-use-recheck').hidden=!useRecheck;
+    $('coupons-use-recheck').disabled=useBusy||useConfirming;
+    $('coupons-use-retry').hidden=!useRecheck?.can_retry;
+    $('coupons-use-retry').disabled=useBusy||useConfirming;
     const terminal=useSubmitted&&!useConfirming;
     const needsLogin=Boolean(relogin?.required);
     $('coupons-use-confirm').disabled=needsLogin||useBusy||useSubmitted||!useOperation||(captchaRequired&&!captchaToken)||(useOperation.kind==='recharge'&&!useOperation.choices.length);
@@ -219,7 +223,7 @@
   function closeUse(force=false){
     if(useConfirming&&!force)return;
     const refreshAfter=useSubmitted;
-    ++useGeneration;useOperation=null;useItem=null;useBusy=false;useConfirming=false;useSubmitted=false;relogin=null;
+    ++useGeneration;useOperation=null;useItem=null;useBusy=false;useConfirming=false;useSubmitted=false;relogin=null;useRecheck=null;
     exchangeRiskToken='';
     clearInterval(reloginTimer);reloginTimer=null;$('coupons-use-relogin').hidden=true;
     $('coupons-relogin-code').value='';$('coupons-relogin-error').hidden=true;
@@ -244,20 +248,37 @@
     await prepareUse(item,generation,accountId);
   }
 
-  async function prepareUse(item,generation,accountId){
+  function showUseSuccess(message){
+    useConfirming=false;useSubmitted=true;closeUse();
+    const toast=$('coupons-toast');
+    clearTimeout(successToastTimer);toast.classList.remove('fading');
+    toast.textContent='兑换成功 · '+message;toast.hidden=false;
+    successToastTimer=setTimeout(()=>{toast.classList.add('fading');successToastTimer=setTimeout(()=>{toast.hidden=true;},250);},2750);
+  }
+
+  async function prepareUse(item,generation,accountId,retry=false){
+    useRecheck=null;$('coupons-use-error').hidden=true;
     try{
-      const prepared=await api('/api/coupons/use/prepare',{login_id:accountId,coupon_id:item.id});
+      const prepared=await api('/api/coupons/use/prepare',{login_id:accountId,coupon_id:item.id,...(retry?{retry:true}:{})});
       if(generation!==useGeneration)return;
+      if(prepared.state==='accepted'){showUseSuccess(prepared.message);return;}
+      if(prepared.state==='unconfirmed'){
+        useOperation=null;useRecheck=prepared;
+        $('coupons-use-description').textContent='正在核实此前的兑换结果；查询不会再次使用卡券。';
+        $('coupons-use-message').textContent=prepared.message;$('coupons-use-message').hidden=false;
+        $('coupons-use-sms-field').hidden=true;$('coupons-use-charge-field').hidden=true;
+        return;
+      }
       if(prepared.state==='payment_required'){
         await openPayment({...prepared.order,coupon_name:prepared.order.coupon_name||item.name});
         return;
       }
       useOperation=prepared;$('coupons-use-title').textContent=useNames[prepared.kind];
-      if(['exchange','rights'].includes(prepared.kind)){
+      if(['exchange','rights','flow'].includes(prepared.kind)){
         await loadExchangeRiskSdk();
         if(generation!==useGeneration)return;
       }
-      const meta=[];for(const [name,value] of [['使用账号',prepared.account_masked],['卡券名称',prepared.coupon_name],['卡券面额',prepared.coupon_amount+' '+(prepared.coupon_unit||'元')]])meta.push(node('dt','',name),node('dd','',value||'—'));
+      const meta=[];for(const [name,value] of [['使用账号',prepared.account_masked],['卡券名称',prepared.coupon_name],['卡券面额',prepared.coupon_amount+' '+(prepared.coupon_unit||(['rights','flow'].includes(prepared.kind)?'':'元'))]])meta.push(node('dt','',name),node('dd','',value||'—'));
       $('coupons-use-meta').replaceChildren(...meta);$('coupons-use-description').textContent=prepared.description||'请核对卡券和账号后确认。';
       $('coupons-use-sms-field').hidden=!prepared.requires_sms;$('coupons-use-code').required=prepared.requires_sms;
       $('coupons-use-charge-field').hidden=prepared.kind!=='recharge';$('coupons-use-charge').required=prepared.kind==='recharge';
@@ -272,6 +293,9 @@
       $('coupons-use-error').textContent=error.message;$('coupons-use-error').hidden=false;$('coupons-use-description').textContent='准备未完成，本次没有提交用券。';
     }finally{if(generation===useGeneration){useBusy=false;renderUseControls();}}
   }
+
+  $('coupons-use-recheck').addEventListener('click',()=>{if(!useBusy&&useItem){useBusy=true;renderUseControls();return prepareUse(useItem,useGeneration,loginId);}});
+  $('coupons-use-retry').addEventListener('click',()=>{if(!useBusy&&useItem&&useRecheck?.can_retry){useBusy=true;renderUseControls();return prepareUse(useItem,useGeneration,loginId,true);}});
 
   $('coupons-use-sms').addEventListener('click',async()=>{
     if(!useOperation||useBusy||useSubmitted)return;
@@ -293,7 +317,7 @@
     const generation=useGeneration;useBusy=true;useConfirming=true;useSubmitted=true;$('coupons-use-error').hidden=true;renderUseControls();
     try{
       const payload={operation_id:useOperation.operation_id,sms_code:$('coupons-use-code').value.trim(),charge_amount:$('coupons-use-charge').value,captcha_token:captchaToken};
-      if(['exchange','rights'].includes(useOperation.kind)){
+      if(['exchange','rights','flow'].includes(useOperation.kind)){
         const verified=await api('/api/coupons/use/confirm',{...payload,prepare_risk:true});
         if(generation!==useGeneration)return;
         if(verified.state!=='risk_required')throw new Error('官方用券步骤未完成，请重新打开用券窗口。');
@@ -309,14 +333,7 @@
       const result=await api('/api/coupons/use/confirm',payload);
       if(generation!==useGeneration)return;
       if(result.state==='accepted'){
-        useConfirming=false;closeUse();
-        const toast=$('coupons-toast');
-        clearTimeout(successToastTimer);toast.classList.remove('fading');
-        toast.textContent='兑换成功 · '+result.message;toast.hidden=false;
-        successToastTimer=setTimeout(()=>{
-          toast.classList.add('fading');
-          successToastTimer=setTimeout(()=>{toast.hidden=true;},250);
-        },2750);
+        showUseSuccess(result.message);
         return;
       }
       captchaToken='';

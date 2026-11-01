@@ -93,6 +93,10 @@ class DatabaseLoginStorage:
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
                 connection.execute('CREATE TABLE IF NOT EXISTS coupon_use_data '
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS access_security '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS update_check '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)')
         except (sqlite3.Error, OSError) as error:
             raise LoginStorageError('无法打开本机账号数据库，请检查目录权限或数据库是否损坏。') from error
 
@@ -107,6 +111,26 @@ class DatabaseLoginStorage:
             return json.loads(self.unprotect(row[0]).decode('utf-8')) if row else None
         except (sqlite3.Error, ValueError, UnicodeError) as error:
             raise LoginStorageError('活动数据读取失败，已保留原数据库。') from error
+
+    def load_access_security(self):
+        with self.lock, self._connect() as connection:
+            row = connection.execute('SELECT payload FROM access_security WHERE id=1').fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_access_security(self, data):
+        with self.lock, self._connect() as connection, connection:
+            connection.execute('INSERT INTO access_security(id,payload) VALUES(1,?) '
+                'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (json.dumps(data),))
+
+    def load_update_check(self):
+        with self.lock, self._connect() as connection:
+            row = connection.execute('SELECT payload FROM update_check WHERE id=1').fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_update_check(self, data):
+        with self.lock, self._connect() as connection, connection:
+            connection.execute('INSERT INTO update_check(id,payload) VALUES(1,?) '
+                'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (json.dumps(data, ensure_ascii=False),))
 
     def load_credentials(self, scope, login_id):
         try:

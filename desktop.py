@@ -52,14 +52,14 @@ def main():
     app.config['SESSION_COOKIE_NAME']='lingxi_desktop_session'
     app.extensions['recharge_app'].config['SESSION_COOKIE_NAME']='lingxi_desktop_recharge_session'
     from flask import Response,jsonify,request
-    from waitress import create_server
+    from network_access import create_http_server
     from desktop_browser import DefaultBrowserWindow,wait_for_page
     quit_event=threading.Event();token=secrets.token_urlsafe(32);icon=None
     port=options.port
     if port:
         with socket.socket() as probe:
             if probe.connect_ex(('127.0.0.1',port))==0:port=0
-    server=create_server(app,host=os.environ.get('LINGXI_HOST','0.0.0.0'),port=port,threads=32,channel_timeout=240)
+    server=create_http_server(app,port)
     port=server.effective_port;url=f'http://127.0.0.1:{port}/?desktop=1'
     window=DefaultBrowserWindow(url)
 
@@ -104,6 +104,7 @@ def main():
     control_file.write_text(json.dumps(instance),'utf-8')
     threading.Thread(target=server.run,daemon=True,name='desktop-http').start()
     wait_for_page(url)
+    app.extensions['update_checker'].start()
     app.extensions['session_maintenance'].start()
     app.extensions['lingxi_scheduler'].start()
     app.extensions['checkin_scheduler'].start()
@@ -127,6 +128,7 @@ def main():
             threading.Thread(target=watch_exit,daemon=True).start()
             icon.run()
     finally:
+        app.extensions['update_checker'].shutdown()
         app.extensions['session_maintenance'].stop()
         app.extensions['lingxi_scheduler'].shutdown()
         app.extensions['checkin_scheduler'].shutdown()
