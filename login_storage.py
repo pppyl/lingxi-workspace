@@ -97,6 +97,8 @@ class DatabaseLoginStorage:
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)')
                 connection.execute('CREATE TABLE IF NOT EXISTS update_check '
                     '(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)')
+                connection.execute('CREATE TABLE IF NOT EXISTS network_settings '
+                    '(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)')
         except (sqlite3.Error, OSError) as error:
             raise LoginStorageError('无法打开本机账号数据库，请检查目录权限或数据库是否损坏。') from error
 
@@ -126,6 +128,16 @@ class DatabaseLoginStorage:
         with self.lock, self._connect() as connection:
             row = connection.execute('SELECT payload FROM update_check WHERE id=1').fetchone()
         return json.loads(row[0]) if row else None
+
+    def load_network_settings(self):
+        with self.lock, self._connect() as connection:
+            row = connection.execute('SELECT payload FROM network_settings WHERE id=1').fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_network_settings(self, data):
+        with self.lock, self._connect() as connection, connection:
+            connection.execute('INSERT INTO network_settings(id,payload) VALUES(1,?) '
+                'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',(json.dumps(data),))
 
     def save_update_check(self, data):
         with self.lock, self._connect() as connection, connection:

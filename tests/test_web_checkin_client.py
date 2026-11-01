@@ -9,7 +9,7 @@ from http_transport import requests
 from credential_cache import CredentialCache
 from activities.web_checkin.client import (
     WebCheckinClient, WebCheckinError, WebLoginManager, SCOPE, ENTRY, BASE,
-    _encrypt, _decrypt,
+    _encrypt, _decrypt, _json,
 )
 
 
@@ -110,6 +110,21 @@ class ClientTests(unittest.TestCase):
     def test_aes_matches_official_cryptojs_fixture(self):
         self.assertEqual(_encrypt(PHONE),'EF81C6E29DFF7B43BF01F4ED811CF442')
         self.assertEqual(_decrypt(_encrypt('123456')),'123456')
+
+    def test_raw_encrypted_sms_response_is_decoded_before_checking_status(self):
+        response = Response(text=_encrypt(json.dumps({'status':0})))
+        self.assertEqual(_json(response),{'status':0})
+
+    def test_wechat_sms_restores_channel_user_agent_before_sso_callback(self):
+        from activities.wechat_checkin.auth import WechatLoginManager, WECHAT_UA, SCOPE as WECHAT_SCOPE
+        self.channel = 'wechat'
+        manager = WechatLoginManager(lambda _id:self.snapshot,self.cache,session_factory=self.session,now=lambda:self.clock)
+        self.addCleanup(manager.close)
+        manager.sms('account-a')
+        manager.flows['account-a']['client'].headers['User-Agent'] = 'SMS-page-user-agent'
+        manager.login('account-a','123456')
+        self.assertEqual(self.cache.load(WECHAT_SCOPE,self.snapshot)['headers']['User-Agent'],WECHAT_UA)
+        self.assertIsNone(self.cache.load(SCOPE,self.snapshot))
 
     def test_missing_channel_login_does_not_convert_app_login_or_send_sms(self):
         with self.assertRaises(WebCheckinError) as error:

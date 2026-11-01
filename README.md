@@ -2,6 +2,8 @@
 
 Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
+左侧“本地服务”显示本机、IPv4 和 IPv6 访问地址，其他网卡地址可展开查看。「平台管理 → 网络监听」可分别开启或关闭 IPv4／IPv6 对外监听，设置写入数据库，重启服务后生效；本机回环入口始终保留。当前运行的监听与尚未应用的设置分别显示，远程访问仍使用原有密码保护。
+
 电脑上的源码服务及 Windows 启动入口默认同时监听 IPv4 和 IPv6 的 5500 端口。其他设备可通过 `http://电脑的IPv4地址:5500/` 或 `http://[电脑的IPv6地址]:5500/` 访问，例如 `http://192.168.31.176:5500/`。各设备共用这台电脑保存的账号池和自动任务，服务仍在这台电脑执行。Windows 防火墙需允许 TCP 5500 的入站连接；管理员可运行 `allow-lan.ps1` 放行局域网访问。如需只允许本机访问，可设置环境变量 `LINGXI_HOST=127.0.0.1` 后启动。
 
 支持 IPv4、IPv6 及指向此服务的合法域名。IPv6 地址直接访问时需使用方括号，例如 `http://[IPv6地址]:5500/`；域名可直接使用 `http://你的域名:5500/`。域名访问按远程访问验证，即使经本机反向代理转发，也不能绕过密码。
@@ -18,7 +20,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 卡券使用按官方协议类型复用，不按面额逐张适配。不同兑换接口、短信模板及待核实记录的处理见 [卡券兑换协议](COUPON_PROTOCOLS.md)。
 
-直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.5.0-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.5.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
+直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.6.0-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.6.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
 
 关闭标签页后客户端留在托盘继续执行定时任务，再次运行时复用已打开的页面，右键托盘图标可退出。启动时确认本地页面可访问后才打开浏览器；客户端 Cookie 名称与源码网页服务分离。账号及任务保存在 `%LOCALAPPDATA%\LingxiWorkspace`，与程序文件分离，升级无需搬运账号库。更新前先退出旧版本，首次使用登录自己的手机号。详细说明见 [DESKTOP.md](DESKTOP.md)。
 
@@ -26,7 +28,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 ## Android 独立版下载
 
-在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.5.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
+在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.6.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
 
 ## 页面与使用
 
@@ -224,7 +226,7 @@ node --test tests/test_lingxi_task_model.mjs
 
 ## Android 独立版
 
-下载发布页中的 `LingxiWorkspace-1.5.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
+下载发布页中的 `LingxiWorkspace-1.6.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
 
 登录凭据使用 Android Keystore 加密，Windows 仍使用 DPAPI。两端各自保存数据，不会把发布者账号打包，也不自动复制电脑的登录态。同一手机号遵循运营商的单点登录规则。付款始终由用户在官方 APP 手动完成。
 

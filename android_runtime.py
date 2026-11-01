@@ -25,6 +25,7 @@ def start(files_dir):
     app.before_request(require_native_session)
     app.extensions['recharge_app'].before_request(require_native_session)
     _server = create_server(app, host='127.0.0.1', port=0, threads=32, channel_timeout=240)
+    app.extensions['network_settings'].attach(_server.effective_port,[('127.0.0.1',_server.effective_port)],override='android')
     threading.Thread(target=_server.run, daemon=True, name='android-http').start()
     for key in ('session_maintenance', 'lingxi_scheduler', 'checkin_scheduler', 'monthly_coupon_scheduler', 'star_day_scheduler', 'platform_manager', 'update_checker'):
         app.extensions[key].start()

@@ -16,9 +16,9 @@ class Element {
 }
 const walk=(element,text)=>element.textContent===text?element:element.children.map(child=>walk(child,text)).find(Boolean);
 const flush=async()=>{for(let i=0;i<12;i++)await new Promise(resolve=>setImmediate(resolve));};
-const script=fs.readFileSync(new URL('../activities/web_checkin/static/web-checkin.js',import.meta.url),'utf8');
+const script=fs.readFileSync(new URL('../activities/checkin_common/static/web-checkin.js',import.meta.url),'utf8');
 
-async function fixture({accountCount=0,pauseRuns=false}={}){
+async function fixture({accountCount=0,pauseRuns=false,wechat=false}={}){
   const elements=new Map(),calls=[],timers=[],pending=[],events={};
   const get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
   get('web-checkin-filter').value='all';
@@ -33,6 +33,7 @@ async function fixture({accountCount=0,pauseRuns=false}={}){
   class Clock extends Date {static now(){return control.now;}}
   const fetch=async(url,options)=>{
     const body=options?.body?JSON.parse(options.body):undefined;calls.push({url,body});
+    if(wechat)url=url.replace('/api/checkin-wechat/','/api/checkin-web/');
     if(control.nonJson)return {ok:false,text:async()=>'<html>upstream error</html>'};
     if(control.error&&body)return {ok:false,text:async()=>JSON.stringify({error:control.error,retry_after:30})};
     if(url==='/api/checkin-web/status')return {ok:true,text:async()=>JSON.stringify(model)};
@@ -44,11 +45,38 @@ async function fixture({accountCount=0,pauseRuns=false}={}){
     if(url==='/api/checkin-web/settings'){model.settings=body;return {ok:true,text:async()=>JSON.stringify({message:'设置已保存',settings:body})};}
     if(url==='/api/checkin-web/sms')return {ok:true,text:async()=>JSON.stringify({retry_after:60,message:'验证码已发送'})};
     if(url==='/api/checkin-web/login'){model.accounts.find(item=>item.id===body.id).activity_state='ready';return {ok:true,text:async()=>JSON.stringify({message:'登录成功'})};}
+    if(url==='/api/checkin-web/authorize'){model.accounts.find(item=>item.id===body.id).activity_state='ready';return {ok:true,text:async()=>JSON.stringify({message:'微信授权已同步'})};}
     throw new Error('Unexpected endpoint '+url);
   };
-  vm.runInNewContext(script,{document:{getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],hidden:false},window:{addEventListener:(name,fn)=>{events[name]=fn;}},fetch,Date:Clock,setInterval(fn,ms){timers.push({fn,ms});}});
+  vm.runInNewContext(script,{document:{body:{dataset:{checkinChannel:wechat?'wechat':'web'}},getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],hidden:false},window:{addEventListener:(name,fn)=>{events[name]=fn;}},fetch,Date:Clock,setInterval(fn,ms){timers.push({fn,ms});}});
   await flush();return {get,calls,timers,events,model,control,pending};
 }
+
+test('WeChat page uses its own endpoints and never starts SMS or phone sync on opening or polling',async()=>{
+  const {calls,get,timers}=await fixture({wechat:true});
+  assert.ok(calls.every(call=>call.url.startsWith('/api/checkin-wechat/')));
+  assert.ok(walk(get('web-checkin-accounts'),'短信登录'));
+  await timers.find(timer=>timer.ms===5000).fn();await flush();
+  assert.equal(calls.some(call=>/sms|login$|authorize$/.test(call.url)),false);
+});
+
+test('WeChat SMS login sends once for the selected account and submits the entered code',async()=>{
+  const {calls,get}=await fixture({wechat:true});
+  await walk(get('web-checkin-accounts'),'短信登录').click();await flush();
+  assert.equal(get('web-checkin-login').open,true);
+  assert.deepEqual(calls.find(call=>call.url.endsWith('/sms')).body,{id:'b'});
+  get('web-checkin-code').value='123456';
+  await get('web-checkin-login-form').handlers.submit({preventDefault(){}});
+  assert.deepEqual(calls.find(call=>call.url.endsWith('/login')).body,{id:'b',code:'123456'});
+  assert.equal(get('web-checkin-login').open,false);
+});
+
+test('a signed account with an expired activity session can still use WeChat SMS login',async()=>{
+  const {get,model,events}=await fixture({wechat:true});
+  model.accounts[2].activity_login_required=true;
+  events['accounts-changed']();await flush();
+  assert.ok(walk(get('web-checkin-accounts').children[2],'短信登录'));
+});
 
 test('opening queries each valid account only through the independent read-only operation and never sends SMS',async()=>{
   const {calls,get}=await fixture();

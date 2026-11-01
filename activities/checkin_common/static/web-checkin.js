@@ -1,11 +1,13 @@
 'use strict';
 const $=id=>document.getElementById(id);
+const wechat=document.body?.dataset.checkinChannel==='wechat';
 const stateNames={login_required:'渠道待登录',ready:'已登录',running:'正在检查',queued:'等待检查',signed:'今日已签到',completed:'本周期已完成',unsigned:'今日未签到',unknown:'尚未查询',failed:'检查失败',error:'检查失败',ineligible:'不符合活动资格',rate_limited:'请求频繁',uncertain:'结果待核实',unknown_result:'结果待核实'};
 let model={settings:{enabled:true,time:'08:00'},accounts:[]},localRefresh=Promise.resolve(true),refreshing=false,loginId='',historyId='',loginWorking=false;
 const smsDeadlines=new Map(),smsPending=new Set();
 const dateText=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
 function node(tag,className='',text){const element=document.createElement(tag);element.className=className;if(text!==undefined)element.textContent=text;return element;}
 async function api(path,payload){
+  if(wechat)path=path.replace('/api/checkin-web/','/api/checkin-wechat/');
   const response=await fetch(path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const text=await response.text();let data;
   try{data=JSON.parse(text);}catch{throw new Error('服务未返回有效结果，请稍后刷新。');}
@@ -41,10 +43,11 @@ function render(){
     if(state==='login_required')today.append(node('small','','本渠道需要单独登录'));
     else if(busy||attention(account))today.append(node('small','',stateNames[state]||state));
     count.append(node('strong','web-checkin-amount',`${account.marked_times??'—'} / ${account.total_times??'—'}`),node('small','','本渠道累计次数'));
+    for(const prize of account.prizes||[])if(prize.status==='UNUSED'||prize.status==='USED')count.append(node('small','',`${prize.name}${prize.status==='USED'?' · 已使用':''}`));
     recent.append(node('time','',dateText(account.last_at)),node('p','web-checkin-result',account.message||'尚未核对官方签到进度'));
     next.append(node('time','',model.settings.enabled?dateText(account.next_run_at):'自动签到未开启'));
     const queryButton=node('button','secondary','查询');queryButton.type='button';queryButton.disabled=busy;queryButton.addEventListener('click',()=>run(account.id,'refresh'));actions.append(queryButton);
-    if(state==='login_required'){const login=node('button','primary','短信登录');login.type='button';login.disabled=busy;login.addEventListener('click',()=>openLogin(account.id));actions.append(login);}
+    if(state==='login_required'||account.activity_login_required){const login=node('button','primary','短信登录');login.type='button';login.disabled=busy;login.addEventListener('click',()=>openLogin(account.id));actions.append(login);}
     else{const signin=node('button','secondary','签到');signin.type='button';signin.disabled=busy||complete||account.today_signed===true||state==='ineligible';signin.addEventListener('click',()=>run(account.id,'signin'));actions.append(signin);}
     const history=node('button','quiet','记录');history.type='button';history.addEventListener('click',()=>{historyId=account.id;renderHistory();$('web-checkin-history').showModal();});actions.append(history);
     actionsCell.append(actions);row.append(identity,today,count,recent,next,actionsCell);return row;

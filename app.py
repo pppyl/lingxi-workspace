@@ -36,6 +36,7 @@ from coupon_captcha import register_coupon_captcha
 from runtime_paths import DATA_DIR,RECHARGE_DATA_DIR
 from access_security import AccessGate, register_access
 from update_checker import register_updates
+from network_access import register_network
 
 
 def create_app(*, enable_recharge=False, recharge_manager=None, recharge_scheduler=None, database_path=None, recharge_data_dir=None):
@@ -55,6 +56,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     login_flows: dict[str, AppLoginSession] = {}
     database = DatabaseLoginStorage(database_path) if database_path is not None else None
     access_security = register_access(app, database)
+    register_network(app, database)
     register_updates(app, database)
     credential_cache = CredentialCache(database)
     app.extensions['credential_cache'] = credential_cache

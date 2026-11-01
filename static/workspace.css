@@ -47,7 +47,9 @@ body.workspace-app {display:block;margin:0;padding:var(--ws-topbar) 0 0 var(--ws
 .workspace-app .workspace-nav-item:hover{background:#20344f;color:#fff;text-decoration:none}
 .workspace-app .workspace-nav-item.active{background:#2260d5;color:#fff;box-shadow:0 4px 14px #07182c22}
 .workspace-nav-divider{border-top:1px solid #2a3b522e;margin:22px 12px 15px}
-.workspace-nav-footer{margin-top:auto;padding:26px 13px 0;display:flex;align-items:center;gap:9px;color:#c4d1e2;font-size:11px}
+.workspace-nav-footer{margin-top:auto;padding:26px 13px 0;display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:#c4d1e2;font-size:11px}
+#workspace-addresses{flex:0 0 100%;min-width:0;padding-top:5px}.network-family{min-width:0}.network-family-label{display:block;font-size:10px;font-weight:500;color:#8095af;margin:9px 0 3px}.network-address{display:block;overflow-wrap:anywhere;line-height:1.65}.workspace-nav-footer .network-address{color:#9cb8d9;font-size:10px}.workspace-nav-footer .network-address:hover{color:#fff}.network-family small{display:block;font-size:10px;color:#8095af}.network-more summary{font-size:9px;color:#829dbc;cursor:pointer;margin-top:4px}.network-more .network-address{margin-top:4px}
+.workspace-nav-footer>div:not(#workspace-addresses){min-width:0;flex:1}.workspace-nav-footer small{overflow-wrap:anywhere}.workspace-service-dot,.workspace-private{flex-shrink:0}
 .workspace-nav-footer small{display:block;color:#637e9e;font-size:10px;margin-top:3px}.workspace-service-dot{height:6px;width:6px;border-radius:50%;background:#3bce9c;box-shadow:0 0 0 4px #37b58b10}.workspace-private{margin-left:auto;font-size:9px;color:#8095af;border:1px solid #34455e;border-radius:4px;padding:1px 5px}
 .workspace-app .workspace-topbar{position:fixed;inset:0 0 auto var(--ws-sidebar);z-index:20;height:var(--ws-topbar);display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 32px;background:#ffffffed;border:0;border-bottom:1px solid var(--ws-line);backdrop-filter:blur(12px);margin:0}
 .workspace-location{display:flex;align-items:center;gap:14px;font-size:12px;min-width:0;color:var(--ws-text)}

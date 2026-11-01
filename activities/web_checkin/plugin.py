@@ -41,7 +41,7 @@ class Controller:
 
 def register(app, credentials, accounts, storage):
     controller = Controller(credentials, accounts, storage)
-    blueprint = Blueprint('web_checkin', __name__, template_folder='templates', static_folder='static',
+    blueprint = Blueprint('web_checkin', __name__, template_folder='../checkin_common/templates', static_folder='../checkin_common/static',
                           static_url_path='/activities/web-checkin/static')
 
     @blueprint.before_request

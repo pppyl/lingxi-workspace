@@ -4,6 +4,19 @@
   <header class="platforms-heading"><div><h1>平台管理</h1><p>管理活动入口与运行状态，短期活动结束后自动停止。</p></div><button type="button" class="secondary" id="platforms-refresh">刷新</button></header>
   <p id="platforms-feedback" class="platforms-feedback" role="status" hidden></p>
   <section id="updates-settings" class="platforms-panel update-settings" aria-label="版本更新"></section>
+  <section class="platforms-panel network-settings" aria-labelledby="network-title">
+    <div class="platforms-panel-heading"><h2 id="network-title">网络监听</h2><p id="network-description">正在读取监听状态…</p></div>
+    <form id="network-settings-form">
+      <div class="network-switches">
+        <label><span><strong>IPv4 对外监听</strong><small>允许通过内网或其他 IPv4 地址访问</small></span><input id="network-ipv4" type="checkbox" role="switch" disabled></label>
+        <label><span><strong>IPv6 对外监听</strong><small>允许通过本机的 IPv6 地址访问</small></span><input id="network-ipv6" type="checkbox" role="switch" disabled></label>
+      </div>
+      <p class="network-note">本机访问始终保留。监听设置保存到数据库，重启服务后生效；其他设备访问仍需访问密码。</p>
+      <p id="network-feedback" class="access-feedback" role="status" hidden></p>
+      <div class="network-settings-actions"><button id="network-save" class="access-primary" type="submit" disabled>保存监听设置</button><button id="network-refresh" class="secondary" type="button">刷新地址</button></div>
+    </form>
+    <div id="network-address-list" class="network-address-list"></div>
+  </section>
   <section class="platforms-panel access-settings" aria-labelledby="access-title">
     <div class="platforms-panel-heading"><h2 id="access-title">访问密码</h2><p id="access-description">正在读取访问设置…</p></div>
     <form id="access-form" data-view="settings" hidden>

@@ -1,14 +1,16 @@
+{% set channel_title = '微信渠道签到' if wechat else '网页渠道签到' %}
+{% set channel_id = 'wechat' if wechat else 'web' %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>网页渠道签到 · 本地工具台</title><link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/checkin.css"><link rel="stylesheet" href="/activities/web-checkin/static/web-checkin.css">
-  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/activities/web-checkin/static/web-checkin.js" defer></script>
+  <title>{{ channel_title }} · 本地工具台</title><link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/checkin.css"><link rel="stylesheet" href="/activities/{{ channel_id }}-checkin/static/web-checkin.css">
+  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/activities/{{ channel_id }}-checkin/static/web-checkin.js" defer></script>
 </head>
-<body class="workspace-app" data-workspace="checkin">
+<body class="workspace-app" data-workspace="checkin" data-checkin-channel="{{ channel_id }}">
 <main class="portal-shell web-checkin-shell">
-  <section class="checkin-heading"><div><a class="web-checkin-back" href="/checkin">← 签到有礼</a><h1>网页渠道签到</h1><p>与 APP 主签到独立，分别保存登录会话和签到进度。</p></div><div class="checkin-actions"><button id="web-checkin-refresh" class="secondary" type="button">刷新</button><button id="web-checkin-settings-open" class="primary" type="button" disabled>自动签到设置</button></div></section>
+  <section class="checkin-heading"><div><a class="web-checkin-back" href="/checkin">← 签到有礼</a><h1>{{ channel_title }}</h1><p>与 APP 主签到独立，分别保存登录会话和签到进度。</p></div><div class="checkin-actions"><button id="web-checkin-refresh" class="secondary" type="button">刷新</button><button id="web-checkin-settings-open" class="primary" type="button" disabled>自动签到设置</button></div></section>
   <p id="web-checkin-warning" class="checkin-notice" role="status" hidden></p><p id="web-checkin-feedback" class="checkin-feedback" role="status" hidden></p>
   <section class="web-checkin-summary" aria-label="网页渠道签到概览"><div><span>今日已签到</span><strong id="web-checkin-signed-total">—</strong></div><div><span>渠道待登录</span><strong id="web-checkin-login-total">—</strong></div><div class="web-checkin-automation"><span>每日自动签到</span><strong id="web-checkin-auto-time">正在读取…</strong><p>默认覆盖所有有效账号，新增或恢复登录后自动纳入。</p></div></section>
   <section class="checkin-list-panel" aria-label="网页渠道账号签到情况">
@@ -16,7 +18,7 @@
     <div class="checkin-table-wrap"><table class="checkin-table web-checkin-table" aria-label="各账号网页渠道签到情况"><colgroup><col class="web-checkin-col-account"><col class="web-checkin-col-state"><col class="web-checkin-col-count"><col><col class="web-checkin-col-time"><col class="web-checkin-col-actions"></colgroup><thead><tr><th scope="col">共享账号</th><th scope="col">今日签到</th><th scope="col">累计 / 周期</th><th scope="col">最近结果 · 北京时间</th><th scope="col">下次自动检查</th><th scope="col">操作</th></tr></thead><tbody id="web-checkin-accounts"><tr><td class="checkin-empty" colspan="6">正在读取账号状态…</td></tr></tbody></table></div>
     <div class="checkin-list-footer"><span id="web-checkin-sync">北京时间 · 自动刷新</span><span>自动刷新仅读取本地记录；点击刷新会核对官方进度。</span></div>
   </section>
-  <p class="checkin-footnote">本渠道需要单独短信登录，之后复用有效会话，不会更换共享 APP 身份。每日时间是开始时间；晚启动或恢复登录后会补查当天未完成的签到。</p>
+  <p class="checkin-footnote">本渠道使用独立短信登录，之后复用有效会话，不会更换共享 APP 身份。每日时间是开始时间；晚启动或恢复登录后会补查当天未完成的签到。</p>
 </main>
 <dialog id="web-checkin-settings" class="web-checkin-dialog" aria-labelledby="web-checkin-settings-title"><form id="web-checkin-settings-form">
   <div class="web-checkin-dialog-heading"><div><h2 id="web-checkin-settings-title">自动签到设置</h2><p>应用于所有有效账号，无需逐个选择。</p></div><button type="button" class="close quiet" data-web-checkin-close="web-checkin-settings" aria-label="关闭自动签到设置">×</button></div>
@@ -26,9 +28,9 @@
   <p id="web-checkin-settings-error" class="web-checkin-error" role="alert" hidden></p><div class="web-checkin-dialog-actions"><button type="button" class="secondary" data-web-checkin-close="web-checkin-settings">取消</button><button id="web-checkin-settings-save" class="primary" type="submit">保存设置</button></div>
 </form></dialog>
 <dialog id="web-checkin-login" class="web-checkin-dialog" aria-labelledby="web-checkin-login-title"><form id="web-checkin-login-form">
-  <div class="web-checkin-dialog-heading"><div><h2 id="web-checkin-login-title">登录网页签到渠道</h2><p>仅恢复本渠道会话，不会重新登录共享 APP。</p></div><button type="button" class="close quiet" data-web-checkin-close="web-checkin-login" aria-label="关闭渠道登录">×</button></div>
+  <div class="web-checkin-dialog-heading"><div><h2 id="web-checkin-login-title">{{ '微信渠道短信登录' if wechat else '登录网页签到渠道' }}</h2><p>仅恢复本渠道会话，不会重新登录共享 APP。</p></div><button type="button" class="close quiet" data-web-checkin-close="web-checkin-login" aria-label="关闭渠道登录">×</button></div>
   <div class="web-checkin-login-account"><span>使用账号</span><strong id="web-checkin-login-account"></strong></div>
-  <label class="web-checkin-label" for="web-checkin-code">短信验证码</label><div class="web-checkin-code-row"><input id="web-checkin-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="输入 6 位验证码" required><button id="web-checkin-sms" class="secondary" type="button">获取验证码</button></div>
+  <div><label class="web-checkin-label" for="web-checkin-code">短信验证码</label><div class="web-checkin-code-row"><input id="web-checkin-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="输入 6 位验证码" required><button id="web-checkin-sms" class="secondary" type="button">获取验证码</button></div></div>
   <p id="web-checkin-sms-status" class="web-checkin-note" role="status"></p><p id="web-checkin-login-error" class="web-checkin-error" role="alert" hidden></p><div class="web-checkin-dialog-actions"><button type="button" class="secondary" data-web-checkin-close="web-checkin-login">取消</button><button id="web-checkin-login-submit" class="primary" type="submit">确认登录</button></div>
 </form></dialog>
 <dialog id="web-checkin-history" class="web-checkin-dialog web-checkin-history" aria-labelledby="web-checkin-history-title"><div class="web-checkin-dialog-heading"><div><h2 id="web-checkin-history-title">执行记录</h2><p id="web-checkin-history-account"></p></div><button type="button" class="close quiet" data-web-checkin-close="web-checkin-history" aria-label="关闭执行记录">×</button></div><div id="web-checkin-history-body"></div></dialog>
