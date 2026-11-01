@@ -75,7 +75,8 @@ def main():
         '--distpath',str(ROOT/'.build/dist'),'--workpath',str(ROOT/'.build/pyinstaller'),'--specpath',str(ROOT/'.build'),
         '--icon',str(assets/'app.ico'),'--noupx','--collect-all','curl_cffi','--collect-all','cryptography',
         '--collect-data','certifi','--hidden-import','pystray._win32',
-        '--exclude-module','tkinter','--exclude-module','matplotlib','--exclude-module','numpy','--exclude-module','pytest']
+        '--exclude-module','tkinter','--exclude-module','matplotlib','--exclude-module','numpy','--exclude-module','pytest',
+        '--exclude-module','orjson']
     activity_resources = ROOT/'.build/activity-resources'
     if activity_resources.exists():
         if activity_resources.resolve().parent != (ROOT/'.build').resolve():

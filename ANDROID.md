@@ -1,6 +1,6 @@
-# Android 独立客户端 v1.4.0
+# Android 独立客户端 v1.5.0
 
-安装 `LingxiWorkspace-1.4.0-Android-arm64.apk` 后打开「本地工具台」。适用 Android 7.0+ ARM64 手机。首次使用在账号管理登录自己的手机号。此版本内置 Python 服务与静态前端，电脑关机也不影响手机上的服务。
+安装 `LingxiWorkspace-1.5.0-Android-arm64.apk` 后打开「本地工具台」。适用 Android 7.0+ ARM64 手机。首次使用在账号管理登录自己的手机号。此版本内置 Python 服务与静态前端，电脑关机也不影响手机上的服务。
 
 应用使用系统 WebView、原生 HTTP/2 网络栈和 Android Keystore。账号、任务及提交记录保存在应用私有目录。卸载会清除本机数据；使用同一签名更新可保留数据。发布文件不包含开发时的数据库或登录信息。
 

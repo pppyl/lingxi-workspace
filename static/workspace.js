@@ -37,7 +37,7 @@
   const groups = [
     {title:'灵犀对话',icon:'chat',keys:['chat','lingxi-tasks']},
   ];
-  const currentGroup = groups.find(group => group.keys.includes(page));
+  const currentGroup = groups.find(group => group.keys.includes(page)) || (location.pathname === '/checkin/web' ? {title:'签到有礼'} : null);
   const nav = document.createElement('aside'); nav.className = 'workspace-nav'; nav.id = 'workspace-navigation';
   nav.innerHTML = `<a class="workspace-brand" href="/" aria-label="本地工具台首页"><span class="workspace-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#84beff" d="m16 2 13 7-13 7L3 9Z"/><path fill="#398cff" d="m3 12 11 6v13L3 25Z"/><path fill="#b9daff" d="m18 18 11-6v13l-11 6Z"/></svg></span><span>本地工具台<small>LOCAL WORKSPACE</small></span></a>
     <div class="workspace-nav-label">工作空间</div><nav aria-label="主导航"><a href="/" class="workspace-nav-item${page === 'home' ? ' active' : ''}"${page === 'home' ? ' aria-current="page"' : ''}>${icon('grid')}<span>工作台</span></a>
@@ -54,7 +54,7 @@
   const current = pages.find(item => item[0] === page);
   const topbar = document.createElement('header'); topbar.className = 'workspace-topbar';
   topbar.innerHTML = `<div class="workspace-location"><button class="workspace-menu" aria-label="展开导航" aria-controls="workspace-navigation" aria-expanded="false" type="button">${icon('menu')}</button><span class="workspace-location-root">工作空间</span><span class="workspace-location-divider">/</span>${currentGroup ? `<span class="workspace-location-parent">${currentGroup.title}</span><span class="workspace-location-divider">/</span>` : ''}<strong></strong></div><div class="workspace-topbar-actions"><span class="workspace-local"><i></i>本地运行</span><button type="button" class="workspace-account-button" data-account-window><span class="workspace-account-avatar">${icon('users')}</span><span>共享账号</span><span class="workspace-chevron">⌄</span></button></div>`;
-  topbar.querySelector('.workspace-location strong').textContent = current ? current[2] : document.querySelector('h1')?.textContent || '账号管理';
+  topbar.querySelector('.workspace-location strong').textContent = location.pathname === '/checkin/web' ? '网页渠道签到' : current ? current[2] : document.querySelector('h1')?.textContent || '账号管理';
   const shade = document.createElement('button'); shade.type = 'button'; shade.className = 'workspace-nav-shade'; shade.setAttribute('aria-label','收起导航'); shade.hidden = true;
   function toggleNavigation() {
     const open = document.body.classList.toggle('workspace-nav-open');
@@ -74,7 +74,7 @@
   function showSeasonalCampaign(platforms) {
     clearTimeout(seasonalTimer);
     const active = platforms.filter(platform => platform.active);
-    seasonalNavigation.replaceChildren(...active.map(platform => {
+    seasonalNavigation.replaceChildren(...active.filter(platform => platform.navigation !== 'checkin').map(platform => {
       const link = document.createElement('a'); link.href = platform.home;
       link.className = 'workspace-nav-item'+(location.pathname === platform.home ? ' active' : '');
       if (location.pathname === platform.home) link.setAttribute('aria-current','page');

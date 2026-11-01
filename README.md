@@ -18,7 +18,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 卡券使用按官方协议类型复用，不按面额逐张适配。不同兑换接口、短信模板及待核实记录的处理见 [卡券兑换协议](COUPON_PROTOCOLS.md)。
 
-直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.4.0-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.4.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
+直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.5.0-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.5.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
 
 关闭标签页后客户端留在托盘继续执行定时任务，再次运行时复用已打开的页面，右键托盘图标可退出。启动时确认本地页面可访问后才打开浏览器；客户端 Cookie 名称与源码网页服务分离。账号及任务保存在 `%LOCALAPPDATA%\LingxiWorkspace`，与程序文件分离，升级无需搬运账号库。更新前先退出旧版本，首次使用登录自己的手机号。详细说明见 [DESKTOP.md](DESKTOP.md)。
 
@@ -26,7 +26,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 ## Android 独立版下载
 
-在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.4.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
+在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.5.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
 
 ## 页面与使用
 
@@ -93,6 +93,14 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 当日须已签到、有库存且未达到领取上限。每次重新取当日场次和奖品 ID，不复用前一天的值；未开放或已领时记为跳过。成功、抢完、达到上限、凭据变更或官方要求验证后取消未发送请求，已经发出的请求保留结果；网络中断导致结果不明时只查询核实。每轮提交标记与每次请求结果加密持久化，已提交的轮次重启后不重放，预热中断且尚未发送的本场任务可继续。任务“记录”中可展开查看每次实际发起的毫秒时间与回复。错过 12 点超过两分钟不会补抢。签到与领券都使用共享池最新 APP 凭据建立活动 SSO，会话中凭据变化时中止本次提交。
 
 自动任务需要本地服务持续运行，电脑开机、联网且不休眠；关闭浏览器页面不影响客户端托盘中的服务。当前版本已实测 APP SSO、官方日历查询、真实签到及启动补签；12 点领券尚未在线上执行，结果以官方回复为准。
+
+### 网页渠道签到
+
+「签到有礼」概览第三张卡片进入 `/checkin/web`。该渠道通过官方网页短信登录，使用独立凭据、签到进度和加密记录，不借用主签到的 APP Cookie。首次点击某个账号的“短信登录”才发送验证码；之后按官方有效会话复用，失效时提示恢复该渠道登录。
+
+自动签到默认覆盖所有有效共享账号，可设置每天开始时间。晚启动和恢复渠道登录后补查当天进度，已签不重复提交；结果不明先只读核实，不自动重发。页面轮询仅读本地记录，主动打开或刷新才核对官方进度。渠道可在平台管理永久删除。
+
+复刻分析使用 Scrapling 解析官方公开页面及资源清单，脚本为 `build_tools/inspect_web_checkin.py`（开发依赖见 `build_tools/requirements-analysis.txt`）；运行时的网页登录、加密和签到均由 Python 完成，无浏览器运行时依赖。协议对照与实测边界见 [网页渠道签到协议](WEB_CHECKIN_PROTOCOL.md)。
 
 ## 每月话费券（贵州移动）
 
@@ -216,7 +224,7 @@ node --test tests/test_lingxi_task_model.mjs
 
 ## Android 独立版
 
-下载发布页中的 `LingxiWorkspace-1.4.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
+下载发布页中的 `LingxiWorkspace-1.5.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
 
 登录凭据使用 Android Keystore 加密，Windows 仍使用 DPAPI。两端各自保存数据，不会把发布者账号打包，也不自动复制电脑的登录态。同一手机号遵循运营商的单点登录规则。付款始终由用户在官方 APP 手动完成。
 

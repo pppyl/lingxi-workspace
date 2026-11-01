@@ -1,0 +1,2 @@
+# Development-only HTML/CSS parsing; the application itself needs no browser.
+scrapling==0.5

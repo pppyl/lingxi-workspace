@@ -44,15 +44,18 @@ class PlatformManager:
             manifest = json.loads(manifest_path.read_text('utf-8'))
             platform_id, title = manifest.get('id'), manifest.get('title')
             home, module = manifest.get('home'), manifest.get('module')
+            navigation = manifest.get('navigation', 'main')
             if (not isinstance(platform_id, str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', platform_id)
                     or not isinstance(title, str) or not title.strip()
                     or not isinstance(home, str) or not re.fullmatch(r'/[a-zA-Z0-9_/-]+', home)
                     or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', folder.name)
                     or module != f'activities.{folder.name}.plugin'
                     or not isinstance(manifest.get('temporary'), bool)
+                    or navigation not in ('main', 'checkin')
                     or platform_id in self.platforms):
                 raise PlatformError('活动清单格式无效，请检查本地模块。')
             entry = {'id': platform_id, 'title': title, 'home': home, 'module': module,
+                     'navigation': navigation,
                      'temporary': manifest['temporary'], 'folder': folder.resolve(),
                      'controller': None, 'state': 'running', 'stopped': False, 'metadata': {}}
             self.platforms[platform_id] = entry
@@ -91,7 +94,7 @@ class PlatformManager:
             rows = []
             for platform_id, entry in self.platforms.items():
                 meta = entry['metadata']
-                row = {key: entry[key] for key in ('id', 'title', 'home', 'temporary', 'state')}
+                row = {key: entry[key] for key in ('id', 'title', 'home', 'temporary', 'state', 'navigation')}
                 row.update(active=bool(meta.get('active')) and entry['state'] == 'running',
                            end_at=meta.get('end_at'), server_time=self.now().isoformat())
                 if entry['state'] == 'deleted':
