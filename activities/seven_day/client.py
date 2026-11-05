@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives import padding, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from app_login import AppLoginError, AppLoginSession
+from app_login import AppCredentialError, AppLoginError, AppLoginSession
 from http_transport import requests
 from recharge.cmcc import APP_UA, SHANGHAI
 from star_day_auth import encrypt_uid
@@ -115,11 +115,14 @@ def campaign_config(*, session=None):
 
 
 class SevenDayClient:
-    def __init__(self, credentials_provider, *, session_factory=None, sdk_encrypt=None, credential_cache=None):
+    def __init__(self, credentials_provider, *, session_factory=None, sdk_encrypt=None, credential_cache=None,
+                 app_session_recover=None):
         self.credentials_provider = credentials_provider
         self.session_factory = session_factory or (lambda: requests.Session(impersonate='chrome'))
         self.sdk_encrypt = sdk_encrypt
         self.credential_cache = credential_cache
+        self.app_session_recover = app_session_recover
+        self.identity_recovered = False
         self.client = None
         self.snapshot = None
         self.user = {}
@@ -141,14 +144,24 @@ class SevenDayClient:
         self.client.headers.update({'User-Agent': APP_UA, 'Origin': ORIGIN, 'Referer': ENTRY,
                                     'Accept-Language': 'zh-CN,zh;q=0.9'})
         if self.credential_cache is None:
-            self._authenticate(snapshot,uid[1])
+            self._authenticate()
         else:
             data = self.credential_cache.connect('seven-day',snapshot,self.client,
-                lambda:self._authenticate(snapshot,uid[1]))
+                self._authenticate)
             self.user = data['user']
         return self
 
-    def _authenticate(self,snapshot,uid):
+    def _authenticate(self):
+        # Cached-session recovery must read today's primary identity, rather
+        # than the snapshot captured when the expired activity cookie was made.
+        snapshot = self.credentials_provider()
+        if snapshot is None or snapshot['phone'] != self.snapshot['phone']:
+            raise SevenDayError('共享账号已退出或切换，请重新选择账号', 'APP_LOGIN_REQUIRED', 401)
+        uid = re.search(r'(?:^|;)\s*UID=([^;]+)', snapshot['cookie'], re.I)
+        if uid is None:
+            raise SevenDayError('共享账号缺少活动身份，请重新登录', 'APP_LOGIN_REQUIRED', 401)
+        uid = uid[1]
+        self.snapshot = snapshot
         try:
             flow = AppLoginSession.from_credentials(snapshot)
             _, result, _ = flow.call('/biz-orange/LN/checkUIDAction/checkUID', {
@@ -160,7 +173,25 @@ class SevenDayClient:
         if str(result.get('retCode')) != '000000':
             raise SevenDayError('APP 活动认证暂未完成（'+str(result.get('retCode'))[:40]+'）', 'APP_UID_FAILED')
         self.current()
-        self.user = self.post('user/loginCheck', {'uid': encrypt_uid(uid), 'verifyType': 1}, encryption='aurora')
+        try:
+            self.user = self.post('user/loginCheck', {'uid': encrypt_uid(uid), 'verifyType': 1}, encryption='aurora')
+        except SevenDayError as error:
+            # These observed loginCheck rejections are not permission to
+            # replay a business request carrying the same numeric code.
+            if error.code not in ('1','30'):
+                raise
+            if self.app_session_recover is None or self.identity_recovered:
+                raise SevenDayError('七日活动登录未通过（'+error.code+'），请重新登录此共享账号后查询；尚未提交打卡。',
+                                    'ACTIVITY_LOGIN_REQUIRED', 401) from error
+            self.identity_recovered = True
+            try:
+                self.app_session_recover(snapshot)
+            except AppLoginError as renewal:
+                required = isinstance(renewal, AppCredentialError) and renewal.login_required
+                raise SevenDayError(str(renewal), 'APP_LOGIN_REQUIRED' if required else 'APP_REFRESH_FAILED',
+                                    401 if required else 502) from renewal
+            self.client.cookies.clear()
+            return self._authenticate()
         # The shipped Jl() returns a growthInfo object even for level="";
         # Ba() checks that object, not whether its level is in V1–V5.
         # post() already checks the official response code. An empty level

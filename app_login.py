@@ -260,7 +260,7 @@ class AppLoginSession:
             })
             code = str(value.get('retCode','unknown'))
         if code != '000000':
-            required = code in {'420000','400007','220230','214265','214100','214101','214102'}
+            required = code in {'410000','420000','400007','220230','214265','214100','214101','214102'}
             safe_code = code if re.fullmatch(r'[A-Za-z0-9_-]{1,32}',code) else 'unknown'
             message = '官方要求重新验证账号' if required else 'APP 自动续期暂未完成，将自动重试'
             raise AppCredentialError(f'{message}（{safe_code}）。',code=safe_code,login_required=required)

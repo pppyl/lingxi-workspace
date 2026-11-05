@@ -9,6 +9,7 @@ import time
 
 from checkin_flash import run_flash_burst
 from login_storage import LoginStorageError
+from feature_runtime import feature_running
 from recharge.cmcc import SHANGHAI
 from .client import SevenDayClient, SevenDayError, DEFAULT_CAMPAIGN, DRAW_PRIZES, campaign_config
 
@@ -28,6 +29,7 @@ class SevenDayScheduler:
         self.thread = None
         self.running, self.pending, self.due, self.revisions = set(), {}, {}, {}
         self.prepared, self.config_due = {}, 0
+        self.restored = set()
         self.warning = self.load_error = ''
         self.data = {'settings': dict(DEFAULT_SETTINGS), 'observations': {}, 'records': {},
                      'campaign': dict(DEFAULT_CAMPAIGN)}
@@ -122,6 +124,7 @@ class SevenDayScheduler:
             self.due.pop(login_id, None)
             self.revisions.pop(login_id, None)
             self.prepared.pop(login_id, None)
+            self.restored.discard(login_id)
             pending = self.pending.pop(login_id, None)
         if pending:
             pending['client'].close()
@@ -139,7 +142,7 @@ class SevenDayScheduler:
 
     def _submission(self, login_id, kind, message):
         self._available()
-        if self.quit.is_set():
+        if self.quit.is_set() or not feature_running():
             raise SevenDayError('自动任务已停止，本次没有提交', 'STOPPED', 409)
         self._record(login_id, kind, submitted=True, message=message)
 
@@ -181,6 +184,48 @@ class SevenDayScheduler:
                 minutes=self.data['settings']['retry_interval_minutes'])
         return None
 
+    def _done_today(self, login_id, now):
+        observation = self.data['observations'].get(login_id, {})
+        settings = self.data['settings']
+        return (observation.get('date') == now.date().isoformat()
+                and (not settings['signin_enabled'] or observation.get('checked_today')
+                     or observation.get('completed') or observation.get('claimed'))
+                and (not settings['draw_enabled'] or observation.get('chances') == 0))
+
+    def login_restored(self, login_id):
+        # An actual user login can resume pending work once. Cookie/version
+        # maintenance never enters here or resets the daily failure budget.
+        with self.lock:
+            self.restored.add(login_id)
+
+    def failure_count(self):
+        now, accounts = self.now(), self.accounts()
+        day = now.date().isoformat()
+        with self.lock:
+            count = 0
+            for account in accounts:
+                login_id = account['id']
+                records = self.data['records'].get(login_id, {}).get(day, {})
+                attempt = self.data['attempts'].get(login_id, {}).get(day, {})
+                observed = self.data['observations'].get(login_id, {})
+                errors = []
+                for kind, record in records.items():
+                    if not record.get('code') and not record.get('uncertain'):
+                        continue
+                    resolved = (kind == 'signin' and observed.get('date') == day and observed.get('checked_today')
+                        or kind == 'draw' and observed.get('date') == day and observed.get('chances') == 0
+                        or kind == 'claim' and observed.get('claimed')
+                        or kind == 'check' and self._done_today(login_id, now))
+                    if not resolved:
+                        errors.append(record)
+                if self._done_today(login_id, now) and not errors:
+                    continue
+                # One account row is one problem, regardless of retry count.
+                count += bool(account['status'] == 'login_required' or errors or
+                    attempt.get('state') in ('failed', 'ineligible') and not (
+                        observed.get('date') == day and observed.get('checked_today') and observed.get('chances') == 0))
+            return count
+
     def status(self):
         campaign = self.metadata()
         with self.lock:
@@ -204,6 +249,9 @@ class SevenDayScheduler:
                     observation['eligible'] = False
                 failed_attempts = attempt.get('failed_attempts', int(ineligible))
                 exhausted = failed_attempts >= settings['max_attempts']
+                done = self._done_today(login_id, now)
+                if done:
+                    exhausted = False
                 due = self.due.get(login_id, now)
                 retry_due = self._retry_due(login_id, now)
                 if retry_due:
@@ -220,11 +268,15 @@ class SevenDayScheduler:
                              'observation': observation, 'last_run': last.get('at'),
                              'failed_attempts': failed_attempts, 'max_attempts': settings['max_attempts'],
                              'retry_exhausted': exhausted,
-                             'retry_message': '资格未通过，今日已暂停自动尝试' if ineligible else
+                             'activity_login_required': not done and check.get('code') == 'ACTIVITY_LOGIN_REQUIRED',
+                             'retry_message': '' if done else '资格未通过，今日已暂停自动尝试' if ineligible else
                                 f"今日失败已达 {settings['max_attempts']} 次，明日再检查" if exhausted else
                                 f"今日失败 {failed_attempts}/{settings['max_attempts']} 次，间隔 {settings['retry_interval_minutes']} 分钟再试"
                                 if failed_attempts and attempt.get('state') == 'failed' else '',
-                             'message': last.get('message', observation.get('message', '等待自动检查')),
+                             'message': ('今日打卡和夺宝均已完成' if settings['signin_enabled'] and settings['draw_enabled']
+                                         else '今日任务已完成')
+                                if done and last.get('code') in ('1','40','APP_UID_FAILED','ACTIVITY_LOGIN_REQUIRED')
+                                else last.get('message', observation.get('message', '等待自动检查')),
                              'next_run': max(min(candidates), due).isoformat()
                                 if campaign['active'] and account['status'] == 'active' and candidates and login_id not in self.pending else None})
             return {'campaign': campaign, 'settings': settings, 'accounts': rows, 'warning': self.warning}
@@ -234,7 +286,7 @@ class SevenDayScheduler:
             return deepcopy(self.data['records'].get(login_id, {}))
 
     def run(self, login_id, kind='refresh', *, target=None):
-        if kind not in ('signin', 'draw', 'refresh', 'automatic', 'prewarm'):
+        if kind not in ('signin', 'draw', 'refresh', 'automatic', 'prewarm', 'restored'):
             raise SevenDayError('请选择打卡、夺宝或刷新', 'INVALID_KIND', 400)
         self._available()
         self._account(login_id)
@@ -243,9 +295,13 @@ class SevenDayScheduler:
             if login_id in self.running or login_id in self.pending:
                 raise SevenDayError('该账号正在执行或等待短信验证', 'ACCOUNT_BUSY', 409)
             attempt_day = None
+            if kind == 'restored' and self._done_today(login_id, self.now()):
+                return {'message': '今日任务已完成，无需重复获取活动凭据'}
             if kind in ('automatic', 'prewarm'):
                 now = self.now()
                 planned = target or now
+                if self._done_today(login_id, planned):
+                    return {'message': '今日任务已完成，无需重复获取活动凭据'}
                 retry_due = self._retry_due(login_id, planned)
                 if retry_due and now < retry_due:
                     return {'message': '当前处于自动重试等待或今日停止期，不会重复安排'}
@@ -269,7 +325,7 @@ class SevenDayScheduler:
         client = self.client_factory(lambda: self.credentials(login_id))
         failed, failure_code = False, ''
         try:
-            if self.quit.is_set():
+            if self.quit.is_set() or not feature_running():
                 return
             self._available()
             client.connect()
@@ -283,16 +339,16 @@ class SevenDayScheduler:
                 return
             if target:
                 deadline = time.monotonic() + max(0, (target-self.now()).total_seconds())
-                while time.monotonic() < deadline and not self.quit.is_set():
+                while time.monotonic() < deadline and not self.quit.is_set() and feature_running():
                     self.quit.wait(min(.1, deadline-time.monotonic()))
-                if self.quit.is_set():
+                if self.quit.is_set() or not feature_running():
                     return
                 observation = client.inspect(self.now())
                 self._observe(login_id, observation)
             settings = dict(self.data['settings'])
             clock = self.now().strftime('%H:%M')
-            do_signin = kind == 'signin' or kind == 'automatic' and settings['signin_enabled'] and clock >= settings['signin_time']
-            do_draw = kind in ('draw', 'prewarm') or kind == 'automatic' and settings['draw_enabled']
+            do_signin = kind == 'signin' or kind in ('automatic','restored') and settings['signin_enabled'] and clock >= settings['signin_time']
+            do_draw = kind in ('draw', 'prewarm') or kind in ('automatic','restored') and settings['draw_enabled']
             if do_signin and not observation['checked_today'] and not observation['completed'] and not observation['claimed']:
                 try:
                     client.signin(lambda: self._submission(login_id, 'signin', '打卡已提交，正在核实'))
@@ -455,6 +511,14 @@ class SevenDayScheduler:
             login_id = account['id']
             if account['status'] != 'active' or self.busy_login(login_id):
                 continue
+            with self.lock:
+                restored = login_id in self.restored
+                self.restored.discard(login_id)
+                ineligible = (self.data['attempts'].get(login_id, {}).get(now.date().isoformat(), {}).get('state') == 'ineligible'
+                    or self.data['records'].get(login_id, {}).get(now.date().isoformat(), {}).get('check', {}).get('code') == 'INELIGIBLE')
+            if restored and not ineligible:
+                self.run(login_id, 'restored')
+                continue
             retry_due = self._retry_due(login_id, now)
             if retry_due and now < retry_due:
                 continue
@@ -472,7 +536,7 @@ class SevenDayScheduler:
             today = observation.get('date') == now.date().isoformat()
             signin_due = settings['signin_enabled'] and now.strftime('%H:%M') >= settings['signin_time'] and not observation.get('claimed') and not observation.get('completed') and not (today and observation.get('checked_today'))
             draw_due = settings['draw_enabled'] and not (today and observation.get('chances') == 0)
-            if changed or signin_due or draw_due:
+            if signin_due or draw_due:
                 self.run(login_id, 'automatic')
 
     def start(self):

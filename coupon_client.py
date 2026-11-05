@@ -65,11 +65,13 @@ def _payload(body, msg_id='', *, millis=None, gcm=True):
     return result
 
 
-def _unpack(response, *, gcm=False, allow_non_object=False):
+def _unpack(response, *, gcm=False, allow_non_object=False, allow_list=False):
     if str(response.get('retCode')) not in ('000000', '0'):
         code = str(response.get('retCode', 'UNKNOWN'))[:40]
         if code == '500003':
             raise CouponError('卡券会话未建立，请校验共享账号后重试。', 'COUPON_LOGIN_REQUIRED', 401)
+        if code in ('000001','999996','999997'):
+            raise CouponError('官方卡券服务暂不可用（'+code+'），请查看官方公告后稍后重试。','UPSTREAM_UNAVAILABLE',503)
         raise CouponError('官方未完成卡券查询（'+code+'），请稍后重试。', 'UPSTREAM_REJECTED')
     data = response.get('data')
     if isinstance(data, dict) and isinstance(data.get('outParam'), str):
@@ -83,7 +85,7 @@ def _unpack(response, *, gcm=False, allow_non_object=False):
         else:
             plain = _cbc_decrypt(encoded)
         data = json.loads(plain)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) and not (allow_list and isinstance(data,list)):
         if allow_non_object:
             return {}
         raise CouponError('卡券服务未返回有效数据，请稍后重试。', 'UPSTREAM_FORMAT')
@@ -143,12 +145,13 @@ def _item(row):
 
 class CouponClient:
     def __init__(self, credentials_provider, *, session_factory=None, app_factory=AppLoginSession.from_credentials,
-                 entry=ENTRY, credential_cache=None):
+                 entry=ENTRY, credential_cache=None, app_session_recover=None):
         self.credentials_provider = credentials_provider
         self.session_factory = session_factory or (lambda: requests.Session(impersonate='chrome'))
         self.app_factory = app_factory
         self.entry = entry
         self.credential_cache = credential_cache
+        self.app_session_recover = app_session_recover
 
     @staticmethod
     def _json(response):
@@ -165,8 +168,14 @@ class CouponClient:
         _, value, _ = self.app_factory(snapshot).call(APP_TOKEN_PATH,
             {'sourceId': '019020', 'url': self.entry, 'cellNum': snapshot['phone']})
         code = str(value.get('retCode'))
+        if code == '410000':
+            error = CouponError('APP 会话已超时（410000），请重新验证账号。', 'APP_SESSION_EXPIRED', 401)
+            error.credential_revision = snapshot.get('credential_revision')
+            raise error
         if code in ('400007', '420000'):
             raise CouponError('APP 登录已过期，请在账号管理重新登录。', 'APP_LOGIN_REQUIRED', 401)
+        if code in ('000001','999996','999997'):
+            raise CouponError('官方卡券认证服务暂不可用（'+code+'），请查看官方公告后稍后重试。','UPSTREAM_UNAVAILABLE',503)
         if code != '000000':
             raise CouponError('APP 未返回卡券认证令牌，请校验共享账号后重试。', 'APP_TOKEN_FAILED')
         body = value.get('rspBody')
@@ -214,9 +223,22 @@ class CouponClient:
                 raise CouponError('账号已退出或已切换，本次卡券查询已停止。', 'APP_CREDENTIALS_CHANGED', 409)
         client = self.session_factory()
         client.headers.update({'User-Agent':APP_UA,'Referer':self.entry,'Origin':ORIGIN})
+        app_recovered = False
         def authenticate():
+            nonlocal app_recovered
             current()
-            return self._authenticate(client,self.credentials_provider(),current)
+            material = self.credentials_provider()
+            try:
+                return self._authenticate(client,material,current)
+            except CouponError as error:
+                if error.code != 'APP_SESSION_EXPIRED' or not recover_login or app_recovered or self.app_session_recover is None:
+                    raise
+                app_recovered = True
+                self.app_session_recover(material)
+                current()
+                # The failed exchange has not established a wallet or OTP session.
+                client.cookies.clear()
+                return self._authenticate(client,self.credentials_provider(),current)
         try:
             if self.credential_cache is None:
                 authenticate()

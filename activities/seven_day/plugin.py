@@ -30,11 +30,12 @@ class Storage:
 
 
 class Controller:
-    def __init__(self, credentials, accounts, database):
+    def __init__(self, credentials, accounts, database, identity_recover=None):
         self.deleted = False
         self.cache = CredentialCache(database)
         self.scheduler = SevenDayScheduler(credentials, accounts, storage=Storage(database) if database else None,
-            client_factory=lambda provider:SevenDayClient(provider,credential_cache=self.cache))
+            client_factory=lambda provider:SevenDayClient(provider,credential_cache=self.cache,
+                app_session_recover=identity_recover))
 
     def metadata(self):
         return self.scheduler.metadata()
@@ -51,7 +52,8 @@ class Controller:
 
 
 def register(app, credentials, accounts, storage):
-    controller = Controller(credentials, accounts, storage)
+    controller = Controller(credentials, accounts, storage, app.extensions.get('app_identity_recover'))
+    app.extensions['seven_day_login_restored'] = controller.scheduler.login_restored
     blueprint = Blueprint('seven_day', __name__, template_folder='templates', static_folder='static',
                           static_url_path='/activities/seven-day/static')
 

@@ -452,6 +452,7 @@ class SevenDayReuseTests(unittest.TestCase):
 
     def test_explicit_auth_rejection_recovers_read_but_never_replays_write(self):
         client = self.connect()
+        self.snapshot.update(cookie='JSESSIONID=renewed; UID=latest-primary-uid',credential_revision=2)
         original = client.client.post
         denied = [True]
         def post(url,**kwargs):
@@ -462,10 +463,50 @@ class SevenDayReuseTests(unittest.TestCase):
         client.client.post = post
         client.post('activities/prize/drawDayNum',{})
         self.assertEqual(self.flow.call.call_count,2)
+        self.assertEqual(self.flow.call.call_args.args[1]['uId'],'latest-primary-uid')
         client.client.post = Mock(return_value=monthly.Response({'code':'40'}))
         with self.assertRaises(SevenDayError):client.post('activities/prize/templatePrize',{},mutation=True)
         client.client.post.assert_called_once()
         self.assertEqual(self.flow.call.call_count,2)
+
+    def test_rejected_activity_login_renews_primary_identity_once_then_uses_new_uid(self):
+        for code,repeats in (('1',False),('1',True),('30',False),('30',True)):
+            with self.subTest(code=code,repeats=repeats):
+                self.cache=CredentialCache();self.sessions=[]
+                self.snapshot=deepcopy(SNAPSHOT)
+                sessions=[]
+                def factory():
+                    http=http_client();sessions.append(http)
+                    replies=[monthly.Response({'code':code,'message':'登录失败'})]
+                    if repeats:replies.append(monthly.Response({'code':code,'message':'登录失败'}))
+                    else:replies.extend([monthly.Response({'code':'0','data':{'userId':'u','provinceCode':'100'}}),monthly.Response({'code':'0','data':{}})])
+                    http.post=Mock(side_effect=replies)
+                    return http
+                def renew(snapshot):
+                    self.snapshot.update(cookie='JSESSIONID=new; UID=renewed-uid',credential_revision=2)
+                recover=Mock(side_effect=renew)
+                client=SevenDayClient(lambda:deepcopy(self.snapshot),session_factory=factory,
+                    credential_cache=self.cache,app_session_recover=recover)
+                try:
+                    if repeats:
+                        with self.assertRaises(SevenDayError) as error:client.connect()
+                        self.assertEqual(error.exception.code,'ACTIVITY_LOGIN_REQUIRED')
+                        self.assertIsNone(self.cache.load('seven-day',self.snapshot))
+                    else:
+                        client.connect()
+                        self.assertEqual(client.user['userId'],'u')
+                    recover.assert_called_once()
+                    self.assertEqual(self.flow.call.call_args.args[1]['uId'],'renewed-uid')
+                    self.assertEqual(sessions[0].post.call_count,2 if repeats else 3)
+                finally:client.close()
+
+    def test_activity_business_code_one_never_renews_or_replays_submission(self):
+        client=self.connect()
+        client.app_session_recover=Mock()
+        client.client.post=Mock(return_value=monthly.Response({'code':'1','message':'失败'}))
+        with self.assertRaises(SevenDayError):client.signin()
+        client.app_session_recover.assert_not_called()
+        client.client.post.assert_called_once()
 
 
 class WednesdayReuseTests(unittest.TestCase):

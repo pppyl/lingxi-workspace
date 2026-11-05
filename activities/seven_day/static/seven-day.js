@@ -103,7 +103,7 @@
       buttons.append(action('打卡', account, 'signin', progress.checked_today || progress.completed || progress.claimed));
       if (progress.completed && !progress.claimed) buttons.append(action('领红包', account, 'claim', false, true));
       buttons.append(action('夺宝', account, 'draw', progress.chances === 0), action('查询', account, 'refresh'));
-      if (account.status !== 'active') {
+      if (account.status !== 'active' || account.activity_login_required) {
         const login = node('button', 'quiet', '重新登录');
         login.type = 'button'; login.dataset.accountWindow = ''; login.dataset.accountRelogin = account.id;
         buttons.append(login);

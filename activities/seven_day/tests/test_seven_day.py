@@ -189,6 +189,83 @@ class SevenDaySchedulerTests(unittest.TestCase):
         self.assertEqual(self.actions('signin'), [('a', 'signin')])
         self.assertTrue(self.scheduler.data['observations']['a']['checked_today'])
 
+    def test_completed_day_never_reconnects_for_revision_changes_or_restart(self):
+        self.scheduler.tick();self.queue.drain()
+        self.assertEqual(len(self.actions('connect')),1)
+        self.now+=timedelta(minutes=10)
+        self.pool[0]['credential_revision']+=1
+        self.scheduler.tick();self.queue.drain()
+        self.scheduler=self.create()
+        self.scheduler.tick();self.queue.drain()
+        self.scheduler.run('a','automatic');self.queue.drain()
+        self.scheduler.login_restored('a')
+        self.scheduler.tick();self.queue.drain()
+        self.assertEqual(len(self.actions('connect')),1)
+        self.now+=timedelta(days=1)
+        self.scheduler.tick();self.queue.drain()
+        self.assertEqual(len(self.actions('signin')),2)
+
+    def test_issue_badge_counts_failed_accounts_once_and_clears_after_confirmation(self):
+        self.connect_error=SevenDayError('登录失败','ACTIVITY_LOGIN_REQUIRED',401)
+        for _ in range(5):
+            self.scheduler.run('a','refresh');self.queue.drain()
+        self.scheduler._record('a','signin',code='10',message='失败')
+        self.assertEqual(self.scheduler.failure_count(),1)
+        self.connect_error=None
+        self.scheduler.run('a','restored');self.queue.drain()
+        self.assertEqual(self.scheduler.failure_count(),0)
+        self.assertEqual(self.scheduler.history('a')['2026-11-01']['signin']['confirmed'],True)
+
+    def test_failed_seventh_day_reward_remains_a_problem_after_daily_tasks_complete(self):
+        self.scheduler.tick();self.queue.drain()
+        self.scheduler._record('a','claim',code='FAILED',message='领奖失败')
+        self.assertEqual(self.scheduler.failure_count(),1)
+        observed=deepcopy(self.scheduler.data['observations']['a']);observed['claimed']=True
+        self.scheduler._observe('a',observed)
+        self.assertEqual(self.scheduler.failure_count(),0)
+
+    def test_completed_official_state_is_not_masked_by_an_old_auth_error(self):
+        self.scheduler.tick();self.queue.drain()
+        self.now+=timedelta(seconds=1)
+        self.scheduler._record('a','check',code='1',message='登录失败')
+        self.scheduler.data['attempts']['a']['2026-11-01'].update(failed_attempts=5,state='failed')
+        row=self.scheduler.status()['accounts'][0]
+        self.assertTrue(row['observation']['checked_today'])
+        self.assertEqual(row['message'],'今日打卡和夺宝均已完成')
+        self.assertEqual(row['retry_message'],'')
+        self.assertFalse(row['retry_exhausted'])
+        self.assertEqual(self.scheduler.history('a')['2026-11-01']['check']['code'],'1')
+
+    def test_explicit_login_resumes_once_after_exhaustion_without_resetting_budget(self):
+        self.scheduler.update_settings({'max_attempts':1})
+        self.connect_error=SevenDayError('登录失败','ACTIVITY_LOGIN_REQUIRED',401)
+        self.scheduler.tick();self.queue.drain()
+        self.pool[0]['credential_revision']+=1
+        self.scheduler.tick();self.queue.drain()
+        self.assertEqual(len(self.actions('connect')),1)
+        self.connect_error=None
+        self.scheduler.login_restored('a');self.scheduler.login_restored('a')
+        self.scheduler.tick();self.queue.drain()
+        self.scheduler.tick();self.queue.drain()
+        self.assertEqual(len(self.actions('connect')),2)
+        self.assertEqual(len(self.actions('signin')),1)
+        self.assertEqual(self.scheduler.data['attempts']['a']['2026-11-01']['failed_attempts'],1)
+
+    def test_login_notification_during_running_work_is_retained_until_worker_finishes(self):
+        self.scheduler.run('a','refresh')
+        self.scheduler.login_restored('a')
+        self.scheduler.tick()
+        self.assertIn('a',self.scheduler.restored)
+        self.queue.drain();self.scheduler.tick();self.queue.drain()
+        self.assertTrue(self.scheduler.data['observations']['a']['checked_today'])
+        self.assertNotIn('a',self.scheduler.restored)
+
+    def test_explicit_login_does_not_bypass_daily_ineligible_gate(self):
+        self.connect_error=SevenDayError('不符合活动资格','INELIGIBLE',409)
+        self.scheduler.tick();self.queue.drain()
+        self.scheduler.login_restored('a');self.scheduler.tick();self.queue.drain()
+        self.assertEqual(len(self.actions('connect')),1)
+
     def test_ineligible_is_checked_once_daily_across_restart_and_credential_maintenance(self):
         self.connect_error = SevenDayError('不符合活动资格', 'INELIGIBLE', 409)
         self.scheduler.tick()

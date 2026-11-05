@@ -24,9 +24,10 @@ class PlatformError(Exception):
 
 
 class PlatformManager:
-    def __init__(self, app, *, root_dir, storage=None, credentials=None, accounts=None, now=None):
+    def __init__(self, app, *, root_dir, storage=None, credentials=None, accounts=None, now=None, features=None):
         self.app, self.root_dir, self.storage = app, Path(root_dir).resolve(), storage
         self.now = now or (lambda: datetime.now(SHANGHAI))
+        self.features = features
         self.lock, self.quit, self.thread = RLock(), Event(), None
         self.platforms, self.registry, self.warning = {}, {}, ''
         if storage is not None:
@@ -65,6 +66,15 @@ class PlatformManager:
                 continue
             controller = import_module(module).register(app, credentials, accounts, storage)
             entry['controller'] = controller
+            if features is not None:
+                api = {'web-checkin':'/api/checkin-web', 'wechat-checkin':'/api/checkin-wechat'}.get(platform_id, '/api/'+platform_id)
+                features.register(platform_id, title, home, (home, api), temporary=entry['temporary'], platform=entry)
+                scheduler = controller.scheduler
+                # Optional modules use these scheduler entry points. Newly
+                # installed activities join the same switch without core edits.
+                features.bind_scheduler(platform_id, scheduler,
+                    background=tuple(name for name in ('tick','run','_enqueue','login_restored','logged_in') if callable(getattr(scheduler, name, None))),
+                    workers=tuple(name for name in ('_work','_perform','_refresh') if callable(getattr(scheduler, name, None))))
         self._routes()
         self.tick()
 
@@ -95,7 +105,8 @@ class PlatformManager:
             for platform_id, entry in self.platforms.items():
                 meta = entry['metadata']
                 row = {key: entry[key] for key in ('id', 'title', 'home', 'temporary', 'state', 'navigation')}
-                row.update(active=bool(meta.get('active')) and entry['state'] == 'running',
+                enabled = self.features is None or self.features.enabled(platform_id)
+                row.update(active=enabled and bool(meta.get('active')) and entry['state'] == 'running', enabled=enabled,
                            end_at=meta.get('end_at'), server_time=self.now().isoformat())
                 if entry['state'] == 'deleted':
                     row.update(deleted_at=self.registry[platform_id].get('deleted_at'),

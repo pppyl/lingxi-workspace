@@ -78,7 +78,7 @@ class Environment:
             raise CouponUseError('账号不存在。', 'LOGIN_MISSING', 404)
         return deepcopy(self.snapshot)
 
-    def client(self, provider, *, entry=None, credential_cache=None):
+    def client(self, provider, *, entry=None, credential_cache=None, app_session_recover=None):
         env = self
         env.wallet_entry = entry
         class FakeClient:

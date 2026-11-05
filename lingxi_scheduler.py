@@ -12,6 +12,7 @@ import threading
 import time
 
 from login_storage import LoginStorageError
+from feature_runtime import feature_running
 
 SHANGHAI=timezone(timedelta(hours=8))
 ACTIVE={'preparing','running','queued','receiving','stopping'}
@@ -270,7 +271,7 @@ class LingxiScheduler:
                 self.workers[job['id']]=worker;worker.start()
 
     def _wait_until(self,target,cancel):
-        while not cancel.is_set() and not self.shutdown_event.is_set():
+        while not cancel.is_set() and not self.shutdown_event.is_set() and feature_running():
             remaining=(target-self.now()).total_seconds()
             if remaining<=0:return True
             cancel.wait(min(remaining,.2))
@@ -288,7 +289,7 @@ class LingxiScheduler:
                 job['attempts']=[{'index':i+1,'planned_at':(target+timedelta(seconds=i*job['interval'])).isoformat(),
                     'sent_at':None,'status':'planned','text':'','cards':[],'error':''} for i in range(job['repeat_count'])]
                 self._persist_locked(job)
-            if cancel.is_set() or self.shutdown_event.is_set():raise TaskError('任务已停止')
+            if cancel.is_set() or self.shutdown_event.is_set() or not feature_running():raise TaskError('功能或任务已停止，本轮不再发送')
             self.prepare(login_id)
             if (self.now()-target).total_seconds()>2:raise TaskError('账号准备已超过预约时间，本轮未发送')
             with self.lock:
@@ -297,7 +298,7 @@ class LingxiScheduler:
                 due=parse_time(attempt['planned_at'])
                 if not self._wait_until(due,cancel):break
                 with self.condition:
-                    if cancel.is_set() or self.shutdown_event.is_set():break
+                    if cancel.is_set() or self.shutdown_event.is_set() or not feature_running():break
                     done=threading.Event();attempt['status']='queued';attempt['queued_at']=self.now().isoformat()
                     self._persist_locked(job)
                     self.pending.append((job,attempt,login_id,content,cancel,done));sends.append(done)
@@ -347,7 +348,7 @@ class LingxiScheduler:
         try:
             def on_sent():
                 with self.lock:
-                    if cancel.is_set() or self.shutdown_event.is_set():raise TaskError('已停止，本次未发送')
+                    if cancel.is_set() or self.shutdown_event.is_set() or not feature_running():raise TaskError('已停止，本次未发送')
                     attempt['status']='receiving';attempt['sent_at']=self.now().isoformat()
                     attempt['queue_wait_seconds']=round((parse_time(attempt['sent_at'])-parse_time(attempt['queued_at'])).total_seconds(),3)
                     job['state']='receiving'

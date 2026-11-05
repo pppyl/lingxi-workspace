@@ -8,7 +8,7 @@ from unittest.mock import patch
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from app_login import (
-    AppLoginError, AppLoginSession, IV, IV_14, REQUEST_KEY, REQUEST_KEY_14,
+    AppCredentialError, AppLoginError, AppLoginSession, IV, IV_14, REQUEST_KEY, REQUEST_KEY_14,
     aes_decrypt, aes_encrypt, client_id, encrypt_phone, md5, wire_request,
 )
 
@@ -64,6 +64,15 @@ class AppLoginTests(unittest.TestCase):
         with self.assertRaises(AppLoginError) as failure:
             AppLoginSession.require_success({"retCode": "110001", "retDesc": "secret-account-data"}, "登录")
         self.assertNotIn("secret-account-data", str(failure.exception))
+
+    def test_expired_auth_refresh_is_terminal_and_never_sends_sms(self):
+        flow=AppLoginSession(phone='13800000000',cookie='JSESSIONID=fixture',xk='fixture',refresh_token='fixture-refresh')
+        with patch.object(flow,'call',return_value=(200,{'retCode':'410000'},{})) as call,patch.object(flow,'send_sms') as sms:
+            with self.assertRaises(AppCredentialError) as error:flow.refresh(force_identity=True)
+        self.assertTrue(error.exception.login_required)
+        self.assertEqual(error.exception.code,'410000')
+        self.assertEqual(call.call_count,2)
+        sms.assert_not_called()
 
 
 if __name__ == "__main__":

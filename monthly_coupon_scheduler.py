@@ -6,6 +6,7 @@ import re
 from threading import Event, RLock, Thread
 
 from login_storage import LoginStorageError
+from feature_runtime import feature_running
 from monthly_coupon_auth import MonthlyCouponAuthError, DEFAULT_ENTRY_URL, validate_entry_url
 from recharge.cmcc import SHANGHAI
 
@@ -215,6 +216,8 @@ class MonthlyCouponScheduler:
 
     def _perform(self, login_id, execute):
         def before_submit(action, period):
+            if not feature_running():
+                raise MonthlyTaskError('每月话费券已关闭，本次未提交。', 423)
             expected = r'\d{8}' if action == 'punch' else r'\d{6}'
             if action not in ('direct', 'bill', 'signin', 'age', 'punch', 'bonus') or not isinstance(period, str) or not re.fullmatch(expected, period):
                 raise MonthlyTaskError('官方执行周期无效，本次未提交。', 502)

@@ -1,14 +1,18 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import json
 import unittest
 from unittest.mock import Mock, patch
+from threading import Event
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from curl_cffi import requests
 
 from coupon_client import (APP_TOKEN_PATH, ENTRY, GCM_KEY, ORIGIN, CouponClient, CouponError,
                            _cbc_encrypt, _payload)
+from credential_cache import CredentialCache
+from app_login import AppCredentialError
 
 SNAPSHOT = {'phone': '13800000000', 'cookie': 'JSESSIONID=fake-app-secret',
             'profile': {}, 'credential_revision': 1}
@@ -40,6 +44,7 @@ class Session:
         self.redirect = ENTRY
         self.pages = 1
         self.status_code = '8'
+        self.cookies = requests.Cookies()
         self.msg_id = base64.b64encode(_cbc_encrypt('official-msg-id').encode()).decode()
 
     def get(self, url, **options):
@@ -147,6 +152,83 @@ class CouponClientTests(unittest.TestCase):
                 self.assertEqual(self.session.calls, [])
                 self.assertTrue(self.session.closed)
 
+    def test_primary_timeout_recovers_once_then_uses_new_credentials_for_wallet_auth(self):
+        expired = (200, {'retCode':'410000','rspBody':''}, {})
+        success = self.flow.call.return_value
+        self.flow.call.side_effect = [expired,success]
+        snapshots = []
+        self.client.app_factory = lambda snapshot:(snapshots.append(snapshot) or self.flow)
+        def recover(snapshot):
+            self.assertEqual(snapshot['cookie'],SNAPSHOT['cookie'])
+            self.provider.return_value = {**SNAPSHOT,'cookie':'JSESSIONID=renewed','credential_revision':2}
+        self.client.app_session_recover = Mock(side_effect=recover)
+        self.assertEqual(len(self.client.query()['items']),1)
+        self.client.app_session_recover.assert_called_once()
+        self.assertEqual([snapshot['cookie'] for snapshot in snapshots],[SNAPSHOT['cookie'],'JSESSIONID=renewed'])
+        self.assertEqual(self.flow.call.call_count,2)
+        self.assertEqual(len(self.session.posts),1)
+
+    def test_official_maintenance_does_not_renew_identity_or_request_login(self):
+        self.flow.call.return_value=(200,{'retCode':'000001','rspBody':None},{})
+        self.client.app_session_recover=Mock()
+        with self.assertRaises(CouponError) as error:self.client.query()
+        self.assertEqual((error.exception.code,error.exception.status),('UPSTREAM_UNAVAILABLE',503))
+        self.assertIn('公告',str(error.exception))
+        self.client.app_session_recover.assert_not_called()
+        self.assertEqual(self.session.calls,[])
+
+    def test_wallet_query_maintenance_response_does_not_reauthenticate(self):
+        self.session.fail_code='999996'
+        self.client.app_session_recover=Mock()
+        with self.assertRaises(CouponError) as error:self.client.query()
+        self.assertEqual(error.exception.code,'UPSTREAM_UNAVAILABLE')
+        self.flow.call.assert_called_once()
+        self.client.app_session_recover.assert_not_called()
+
+
+    def test_timeout_after_recovery_is_not_retried_again_or_reported_as_missing_token(self):
+        self.flow.call.return_value = (200, {'retCode':'410000','rspBody':''}, {})
+        self.client.app_session_recover = Mock()
+        with self.assertRaises(CouponError) as error:self.client.query()
+        self.assertEqual((error.exception.code,error.exception.status),('APP_SESSION_EXPIRED',401))
+        self.assertIn('410000',str(error.exception))
+        self.assertEqual(self.flow.call.call_count,2)
+        self.client.app_session_recover.assert_called_once()
+        self.assertFalse(self.session.posts)
+
+    def test_expired_read_with_recovery_disabled_never_renews_primary_identity(self):
+        self.flow.call.return_value = (200, {'retCode':'410000','rspBody':''}, {})
+        self.client.app_session_recover = Mock()
+        with self.assertRaises(CouponError):self.client.query(recover_login=False)
+        self.client.app_session_recover.assert_not_called()
+        self.flow.call.assert_called_once()
+
+    def test_valid_cached_wallet_never_renews_an_unusable_primary_cookie(self):
+        self.session.cookies.set('wallet-session','valid')
+        self.client.credential_cache = CredentialCache()
+        self.client.query()
+        self.flow.call.reset_mock()
+        self.flow.call.return_value = (200, {'retCode':'410000','rspBody':''}, {})
+        self.client.app_session_recover = Mock()
+        self.client.query()
+        self.flow.call.assert_not_called()
+        self.client.app_session_recover.assert_not_called()
+
+    def test_concurrent_wallet_bootstrap_shares_one_primary_recovery(self):
+        cache, entered, finish = CredentialCache(), Event(), Event()
+        flow=Mock()
+        flow.call.side_effect=[(200,{'retCode':'410000','rspBody':''},{}),self.flow.call.return_value]
+        recover=Mock(side_effect=lambda snapshot:(entered.set(),finish.wait(2)))
+        def query(_):
+            return CouponClient(lambda:SNAPSHOT,session_factory=Session,app_factory=lambda _:flow,
+                credential_cache=cache,app_session_recover=recover).query()
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            tasks=[pool.submit(query,index) for index in range(6)]
+            self.assertTrue(entered.wait(1));finish.set()
+            self.assertTrue(all(len(task.result()['items'])==1 for task in tasks))
+        recover.assert_called_once()
+        self.assertEqual(flow.call.call_count,2)
+
     def test_primary_rotation_does_not_abort_verified_same_phone_wallet(self):
         original = self.session.get
         def get(url, **options):
@@ -233,6 +315,46 @@ class CouponApiTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/coupons/use/sms', json={'operation_id': 'missing'}).status_code, 404)
         self.assertEqual(self.client.post('/api/coupons/use/confirm', json={'operation_id': 'missing'}).status_code, 404)
         self.assertEqual(self.client.post('/api/coupons/use/confirm', json=[]).status_code, 400)
+
+    def test_wallet_recovery_forces_identity_once_commits_new_primary_and_leaves_other_realms_cached(self):
+        record=self.pool.remember(SNAPSHOT['phone'],SNAPSHOT['cookie'],{},'existing-token',
+            app_context={'device_id':'fixture','xk':'key','refreshed_at':__import__('time').time()})
+        manager=self.app.extensions['coupon_uses']
+        snapshot={**self.pool.credentials(record.id),'id':record.id}
+        cache=self.app.extensions['credential_cache']
+        cache.entries[('independent-realm',record.id)]={'phone':record.phone,'expires_at':None,'data':{}}
+        def refreshed(flow,**kwargs):
+            flow.cookie='JSESSIONID=renewed';flow.refreshed_at=__import__('time').time()
+        with patch('app.AppLoginSession.refresh',autospec=True,side_effect=refreshed) as refresh:
+            manager.app_session_recover(record.id,snapshot)
+            manager.app_session_recover(record.id,snapshot)
+        refresh.assert_called_once()
+        self.assertTrue(refresh.call_args.kwargs['force_identity'])
+        self.assertEqual(record.cookie,'JSESSIONID=renewed')
+        self.assertIn(('independent-realm',record.id),cache.entries)
+
+    def test_failed_renewal_updates_account_status_in_query_error_without_sending_sms(self):
+        record=self.pool.remember(SNAPSHOT['phone'],SNAPSHOT['cookie'],{},'',app_context={'device_id':'fixture','xk':'key'})
+        def query(*args,**kwargs):
+            snapshot={**self.pool.credentials(record.id),'id':record.id}
+            self.app.extensions['coupon_uses'].app_session_recover(record.id,snapshot)
+        with patch('coupon_use.CouponClient.query',side_effect=query),patch('app.AppLoginSession.refresh',
+                side_effect=AppCredentialError('官方要求重新验证（420000）',code='420000',login_required=True)),\
+                patch('app.AppLoginSession.send_sms') as sms:
+            response=self.client.get('/api/coupons?login_id='+record.id)
+        self.assertEqual(response.status_code,401)
+        self.assertEqual(response.json['code'],'APP_LOGIN_REQUIRED')
+        self.assertEqual(response.json['account']['status'],'login_required')
+        self.assertEqual(record.status,'login_required')
+        sms.assert_not_called()
+
+    def test_live_otp_binding_prevents_primary_recovery(self):
+        record=self.pool.remember(SNAPSHOT['phone'],SNAPSHOT['cookie'],{},'')
+        manager=self.app.extensions['coupon_uses']
+        with patch.object(manager,'busy_login',return_value=True),patch('app.AppLoginSession.refresh') as refresh:
+            with self.assertRaises(CouponError) as error:manager.app_session_recover(record.id,self.pool.credentials(record.id))
+        self.assertEqual(error.exception.code,'ACCOUNT_BUSY')
+        refresh.assert_not_called()
 
     def test_confirm_route_forwards_official_captcha_token_without_echoing_it(self):
         manager = self.app.extensions['coupon_uses']

@@ -80,3 +80,13 @@ test('ineligible rows state the daily pause and allow a manual query without aut
   walk(get('seven-accounts'),'查询').click();await flush();
   assert.deepEqual(calls.filter(c=>c.body),[{url:'/api/seven-day/run',body:{id:'a',kind:'refresh'}}]);
 });
+
+test('a rejected activity login offers account recovery even while the primary account is active',async()=>{
+  const {get,model,calls}=await fixture();
+  model.accounts=[{id:'a',name:'7797',status:'active',phone_masked:'182****7797',
+    activity_login_required:true,observation:{checked_today:false},message:'七日活动登录未通过'}];
+  get('seven-refresh').click();await flush();
+  const login=walk(get('seven-accounts'),'重新登录');
+  assert.equal(login.dataset.accountRelogin,'a');
+  assert.equal(calls.some(c=>c.body),false);
+});

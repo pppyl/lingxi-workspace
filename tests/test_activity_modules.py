@@ -7,5 +7,7 @@ def load_tests(loader, tests, pattern):
     root = Path(__file__).resolve().parents[1]
     suite = unittest.TestSuite()
     for folder in sorted((root/'activities').glob('*/tests')):
+        if not any(folder.glob('test_*.py')):
+            continue
         suite.addTests(loader.discover(str(folder), pattern='test_*.py', top_level_dir=str(root)))
     return suite

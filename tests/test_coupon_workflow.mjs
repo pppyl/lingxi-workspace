@@ -20,7 +20,7 @@ class Element {
 }
 
 async function fixture(mode,options={}) {
-  const elements=new Map(),calls=[],events={},timers=new Map(),get=id=>{
+  const elements=new Map(),calls=[],events={},dispatched=[],timers=new Map(),get=id=>{
     if(!elements.has(id))elements.set(id,new Element());return elements.get(id);
   };
   get('coupons-use-verification').append(new Element('p'));
@@ -32,13 +32,14 @@ async function fixture(mode,options={}) {
     const body=fetchOptions?.body?JSON.parse(fetchOptions.body):undefined;calls.push({url,body});
     let result,status=200;
     if(url==='/api/coupons/accounts')result={accounts:options.accounts||[{id:'account',status:'active',name:'fixture',phone_masked:'138****0000'}]};
+    else if(url==='/api/coupons/notices')result=options.notices||{notices:[],checked_at:null,stale:false,message:''};
     else if(url.startsWith('/api/coupons/pending?')){
       if(options.failPendingRead&&calls.filter(c=>c.url.startsWith('/api/coupons/pending?')).length>1)throw new Error('network unavailable');
       result={pending_orders:pending};
     }
     else if(url.startsWith('/api/coupons?')){
       const accountId=new URLSearchParams(url.split('?')[1]).get('login_id');
-      if(options.queryFailures?.length){status=409;result={code:options.queryFailures.shift(),error:'共享账号凭据已更新，请重新查询卡券。'};}
+      if(options.queryFailures?.length){status=409;result={code:options.queryFailures.shift(),error:'共享账号凭据已更新，请重新查询卡券。',account:options.failedAccount};}
       else if(options.countFailureIds?.includes(accountId)){status=401;result={code:'APP_LOGIN_REQUIRED',error:'账号需要重新登录'};}
       else{
         const rows=accepted&&options.consumeOnAccepted?[]:options.itemsByAccount?.[accountId]||[card];
@@ -77,13 +78,14 @@ async function fixture(mode,options={}) {
   };
   vm.runInNewContext(fs.readFileSync(new URL('../static/coupons.js',import.meta.url),'utf8'),{
     document:{cookie:'session=private; _zw_kvani5r=real-sdk-lid',getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],head:{append(script){script.onload();}}},
-    window:{addEventListener:(name,fn)=>{events[name]=fn;},publishAccountsChanged:()=>events['accounts-changed'](),
+    window:{addEventListener:(name,fn)=>{events[name]=fn;},dispatchEvent:event=>dispatched.push(event),publishAccountsChanged:()=>events['accounts-changed'](),
       _zw:{ConstID(config,done){calls.push({url:'official-sdk',body:config});done(options.sdkError||null,options.sdkError?'':'real-sdk-token');}}},fetch:http,location:{origin:'http://localhost:5500'},Intl,URLSearchParams,Date:class extends Date{static now(){return options.now??Date.now();}},
+    CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
     clearInterval(){},setInterval(){return 1;},clearTimeout(id){timers.delete(id);},
     setTimeout(callback,delay){const id=Symbol();timers.set(id,{callback,delay});return id;},
   });
   await new Promise(resolve=>setImmediate(resolve));
-  if(options.onlyCounts)return {get,calls,events,timers};
+  if(options.onlyCounts)return {get,calls,events,dispatched,timers};
   const walk=(node,label)=>node.textContent===label?node:node.children.map(child=>walk(child,label)).find(Boolean);
   let submission;
   if(mode==='payment')await walk(get('coupons-pending-list'),'继续支付').click();
@@ -134,7 +136,7 @@ for(const networkFailure of [false,true])test(`payment window expiry removes row
   assert.equal(get('coupons-use').open,false);
   assert.equal(get('coupons-payment-url').value,'');
   assert.equal(get('coupons-payment-panel').hidden,true);
-  assert.equal(timers.size,0);
+  assert.ok([...timers.values()].every(timer=>timer.delay>=300000),'No short payment retry timer is left behind');
   assert.equal(calls.filter(c=>c.url.startsWith('/api/coupons/pending?')).length,2);
   assert.equal(calls.some(c=>c.url==='/api/coupons/use/confirm'||c.url.startsWith('/api/logins/')),false);
 });
@@ -321,6 +323,88 @@ test('clicking the selected account retries its failed list immediately without 
   assert.equal(calls.filter(c=>c.url.startsWith('/api/coupons?')).length,2);
   assert.equal(calls.some(c=>c.url.startsWith('/api/logins/')),false);
   assert.match(renderedText(get('coupons-accounts')),/可用 1 张/);
+});
+
+test('a terminal session timeout replaces the stale green account state and focuses login without sending SMS',async()=>{
+  const account={id:'account',name:'fixture',status:'login_required',phone_masked:'138****0000',credential_revision:2};
+  const env=await fixture('counts',{onlyCounts:true,queryFailures:['APP_SESSION_EXPIRED'],failedAccount:account});
+  assert.match(renderedText(env.get('coupons-accounts')),/需重新登录/);
+  assert.doesNotMatch(renderedText(env.get('coupons-accounts')),/已登录/);
+  assert.equal(env.dispatched[0].type,'open-account-manager');
+  assert.equal(env.dispatched[0].detail.loginId,'account');
+  assert.equal(env.calls.some(call=>call.url.startsWith('/api/logins/')),false);
+  assert.equal(env.get('coupons-refresh').disabled,false);
+});
+
+test('an older authentication failure cannot overwrite newer login state or reopen account management',async()=>{
+  const env=await fixture('counts',{onlyCounts:true,accounts:[{id:'account',name:'fixture',status:'active',credential_revision:3}],
+    queryFailures:['APP_SESSION_EXPIRED'],failedAccount:{id:'account',name:'fixture',status:'login_required',credential_revision:2}});
+  assert.match(renderedText(env.get('coupons-accounts')),/已登录/);
+  assert.doesNotMatch(renderedText(env.get('coupons-accounts')),/需重新登录/);
+  assert.equal(env.dispatched.length,0);
+});
+
+test('a fresh list request clears the previous failed sync message while it is in progress',async()=>{
+  let hold=false,release;
+  const env=await fixture('counts',{onlyCounts:true,queryFailures:['APP_CREDENTIALS_CHANGED'],
+    beforeResponse:({url})=>{if(hold&&url.startsWith('/api/coupons?'))return new Promise(resolve=>{release=resolve;});}});
+  assert.match(env.get('coupons-sync').textContent,/查询未完成/);
+  hold=true;const request=env.get('coupons-accounts').children[0].click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(env.get('coupons-sync').textContent,/正在查询卡券/);
+  assert.doesNotMatch(env.get('coupons-sync').textContent,/查询未完成/);
+  release();await request;
+  assert.match(env.get('coupons-sync').textContent,/最近查询/);
+});
+
+test('official notices show dynamic title and plain text even when the wallet query fails',async()=>{
+  const env=await fixture('counts',{onlyCounts:true,queryFailures:['APP_TOKEN_FAILED'],notices:{
+    notices:[{id:'official',title:'服务安排更新',content:'官方给出的另一段维护时间。<img src=x onerror=unsafe()>',published_at:'2031-04-15T08:00:00+08:00',end_at:'2031-04-16T08:00:00+08:00'}],
+    checked_at:1000,stale:true,message:'保留上次读取的官方公告。'}});
+  assert.equal(env.get('coupons-notices').hidden,false);
+  assert.match(renderedText(env.get('coupons-notices-list')),/服务安排更新.*另一段维护时间/);
+  assert.equal(env.get('coupons-notices-list').children[0].children[1].innerHTML,undefined);
+  assert.match(env.get('coupons-notices-sync').textContent,/缓存公告/);
+  assert.match(env.get('coupons-notices-message').textContent,/保留上次/);
+  assert.equal(env.calls.some(call=>call.url.startsWith('/api/logins/')),false);
+});
+
+test('no official notice hides the banner without delaying card loading',async()=>{
+  const env=await fixture('counts',{onlyCounts:true});
+  assert.equal(env.get('coupons-notices').hidden,true);
+  assert.match(renderedText(env.get('coupons-accounts')),/可用 1 张/);
+});
+
+test('a working wallet does not fetch or display cached maintenance notices',async()=>{
+  const env=await fixture('counts',{onlyCounts:true,notices:{
+    notices:[{id:'old',title:'系统升级',content:'上次维护公告'}],stale:true,message:'缓存公告'}});
+  assert.equal(env.get('coupons-notices').hidden,true);
+  assert.equal(env.calls.some(call=>call.url==='/api/coupons/notices'),false);
+  assert.equal(env.timers.size,0);
+});
+
+test('a successful retry hides the notice and stops notice polling',async()=>{
+  const env=await fixture('counts',{onlyCounts:true,queryFailures:['UPSTREAM_UNAVAILABLE'],notices:{
+    notices:[{id:'maintenance',title:'系统升级',content:'官方当前维护通知'}],stale:false,message:''}});
+  assert.equal(env.get('coupons-notices').hidden,false);
+  assert.ok(env.timers.size>0);
+  await env.get('coupons-refresh').click();
+  assert.equal(env.get('coupons-notices').hidden,true);
+  assert.equal(env.timers.size,0);
+  assert.equal(env.calls.filter(call=>call.url==='/api/coupons/notices').length,1);
+  assert.match(renderedText(env.get('coupons-accounts')),/可用 1 张/);
+});
+
+test('a late notice response cannot reopen the banner after wallet recovery',async()=>{
+  let releaseNotice;
+  const env=await fixture('counts',{onlyCounts:true,queryFailures:['UPSTREAM_UNAVAILABLE'],notices:{
+    notices:[{id:'maintenance',title:'系统升级',content:'迟到的维护公告'}],stale:true,message:'保留上次公告'},
+    beforeResponse:({url})=>url==='/api/coupons/notices'?new Promise(resolve=>{releaseNotice=resolve;}):undefined});
+  await env.get('coupons-refresh').click();
+  releaseNotice();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(env.get('coupons-notices').hidden,true);
+  assert.equal(env.timers.size,0);
+  assert.equal(env.calls.filter(call=>call.url==='/api/coupons/notices').length,1);
 });
 
 test('login notifications during a failed in-flight refresh coalesce into one immediate fresh query',async()=>{

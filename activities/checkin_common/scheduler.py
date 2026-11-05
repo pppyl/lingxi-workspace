@@ -96,6 +96,19 @@ class WebCheckinScheduler:
             return max(start, datetime.fromisoformat(last)+timedelta(minutes=RETRY_MINUTES)).isoformat()
         return max(start, now).isoformat()
 
+    def failure_count(self):
+        day = self.now().date().isoformat()
+        accounts = self.accounts()
+        with self.lock:
+            count = 0
+            for account in accounts:
+                observation = self.data['observations'].get(account['id'], {})
+                if observation.get('sign_date') == day and observation.get('today_signed'):
+                    continue
+                attempt = self.data['attempts'].get(account['id'], {}).get(day, {})
+                count += attempt.get('state') in ('failed','unknown_result','login_required','ineligible','rate_limited')
+            return count
+
     def status(self):
         now, accounts = self.now(), self.accounts()
         day = now.date().isoformat()

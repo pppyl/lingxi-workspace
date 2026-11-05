@@ -12,6 +12,7 @@ from threading import Event, RLock, Thread
 from checkin_client import CheckinClient, CheckinError, FLASH_PRODUCT
 from checkin_flash import BURST_DEFAULTS, PREPARE_SECONDS
 from login_storage import LoginStorageError
+from feature_runtime import feature_running
 from recharge.cmcc import SHANGHAI
 
 
@@ -257,7 +258,7 @@ class CheckinScheduler:
             nonlocal submitted
             with self.lock:
                 task = self.data['tasks'][task_id]
-                if self.quit.is_set() or task.get('cancel_requested'):
+                if self.quit.is_set() or task.get('cancel_requested') or not feature_running():
                     raise CheckinTaskError('任务已停止，本次没有提交。', 409)
                 if not submitted:
                     updated = deepcopy(self.data)

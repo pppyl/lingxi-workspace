@@ -65,7 +65,11 @@ class NetworkAccessTests(unittest.TestCase):
         with patch.dict(os.environ):
             os.environ.pop('LINGXI_HOST', None)
             server = create_http_server(self.app, 0)
-        worker = threading.Thread(target=server.run, daemon=True)
+        stopped = threading.Event()
+        def serve():
+            while not stopped.is_set():
+                server.asyncore.loop(timeout=.05,count=1,map=server.map,use_poll=server.adj.asyncore_use_poll)
+        worker = threading.Thread(target=serve, daemon=True)
         worker.start()
         try:
             opener = build_opener(ProxyHandler({}))
@@ -76,8 +80,9 @@ class NetworkAccessTests(unittest.TestCase):
                     self.assertTrue(state['local'])
                     self.assertEqual(response.status, 200)
         finally:
-            server.close()
+            stopped.set()
             worker.join(timeout=2)
+            server.close()
 
 
 if __name__ == '__main__':unittest.main()

@@ -8,6 +8,10 @@
 </head>
 <body class="workspace-app" data-workspace="coupons"><main class="portal-shell coupons-shell">
   <section class="coupons-heading"><div><h1>我的卡券</h1><p>查看共享账号的可用卡券、有效期和历史记录。</p></div><button id="coupons-refresh" class="secondary" type="button">刷新卡券</button></section>
+  <aside id="coupons-notices" class="coupons-notices" aria-label="中国移动官方卡券公告" hidden>
+    <div class="coupons-notices-heading"><strong>官方公告</strong><span id="coupons-notices-sync"></span></div>
+    <div id="coupons-notices-list"></div><p id="coupons-notices-message" role="status" hidden></p>
+  </aside>
   <section class="coupons-account-panel" aria-label="选择卡券账号">
     <div class="coupons-account-heading"><h2>共享账号 <span id="coupons-account-count">—</span></h2><span id="coupons-account-hint">正在读取账号…</span></div>
     <div id="coupons-accounts" class="coupons-accounts" role="group" aria-label="卡券使用账号"></div>

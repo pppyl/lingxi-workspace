@@ -29,9 +29,11 @@ from star_day_auth import StarDayAuthError
 from star_day_scheduler import StarDayScheduler
 from credential_cache import CredentialCache
 from platform_manager import PlatformManager
+from feature_control import FeatureControl
 import activities
 from coupon_client import CouponError, SORTS as COUPON_SORTS
 from coupon_use import CouponUseManager
+from coupon_notices import CouponNotices
 from coupon_captcha import register_coupon_captcha
 from runtime_paths import DATA_DIR,RECHARGE_DATA_DIR
 from access_security import AccessGate, register_access
@@ -55,6 +57,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     lingxi_auth_locks = {}
     login_flows: dict[str, AppLoginSession] = {}
     database = DatabaseLoginStorage(database_path) if database_path is not None else None
+    features = FeatureControl(app, database)
     access_security = register_access(app, database)
     register_network(app, database)
     register_updates(app, database)
@@ -109,19 +112,24 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 logged.auth_code, logged.verified = saved.token, bool(saved.token)
                 logged.app_cookie, logged.app_profile = saved.cookie, dict(saved.profile)
 
-    def refresh_app_credentials(saved, *, force=False):
+    def refresh_app_credentials(saved, *, force=False, expired_cookie=None):
         with unified.phone_lock(saved.phone):
             if coupon_uses.busy_login(saved.id):
                 return
             snapshot = unified.credentials(saved.id)
             if snapshot is None:
                 raise AppCredentialError('账号已退出，请重新选择账号。',login_required=True)
+            if expired_cookie is not None and snapshot['cookie'] != expired_cookie:
+                return  # Another request already replaced the rejected primary session.
             if not force and time.time() - snapshot['app_context'].get('refreshed_at',0) < 600:
                 return
             revision = snapshot['credential_revision']
             flow = AppLoginSession.from_credentials(snapshot)
             try:
-                flow.refresh()
+                if expired_cookie is not None:
+                    flow.refresh(force_identity=True)
+                else:
+                    flow.refresh()
             except AppLoginError as exc:
                 required = isinstance(exc,AppCredentialError) and exc.login_required
                 unified.mark(saved,'login_required' if required else 'active',str(exc),expected_revision=revision)
@@ -132,6 +140,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 raise AppCredentialError('账号凭据已变更，请重试。')
             app.extensions['session_maintenance'].due.pop(saved.id,None)
 
+    @features.scoped('lingxi', skip_disabled=True)
     def ensure_token(saved, *, refresh=False):
         # Only APP renewal needs the shared phone lock. Slow Lingxi verification
         # uses its own lock so wallet/OTP operations remain independent.
@@ -306,11 +315,29 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
     @app.errorhandler(CouponError)
     def coupon_error(error):
-        return jsonify(error=str(error), code=error.code), error.status
+        result = {'error':str(error), 'code':error.code}
+        login_id = request.args.get('login_id') or (request.get_json(silent=True) or {}).get('login_id')
+        saved = unified.get_id(login_id)
+        if saved is not None:
+            if error.code == 'APP_SESSION_EXPIRED':
+                unified.mark(saved,'login_required',str(error),expected_revision=error.credential_revision)
+            result['account'] = saved.public()
+        return jsonify(result), error.status
 
     @app.get('/api/coupons/accounts')
     def coupon_accounts():
         return jsonify(accounts=unified.public())
+
+    def notice_snapshots():
+        with unified.lock:
+            return [{**unified.credentials(saved.id),'id':saved.id} for saved in unified.records.values()]
+
+    coupon_notices=CouponNotices(notice_snapshots,credential_cache,database)
+    app.extensions['coupon_notices']=coupon_notices
+
+    @app.get('/api/coupons/notices')
+    def notices_status():
+        return jsonify(coupon_notices.get())
 
     def coupon_credentials(login_id):
         with unified.lock:
@@ -321,12 +348,26 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 raise CouponError('此账号尚未就绪，请从左侧账号管理恢复登录。', 'APP_LOGIN_REQUIRED', 401)
             return {**unified.credentials(login_id),'id':login_id}
 
+    def recover_coupon_app(login_id, snapshot):
+        saved = unified.get_id(login_id)
+        if saved is None:
+            raise CouponError('账号已退出，请重新选择账号。','ACCOUNT_NOT_FOUND',404)
+        with unified.phone_lock(saved.phone):
+            if coupon_uses.busy_login(login_id):
+                raise CouponError('该账号正在验证码或用券流程中，请完成后再恢复登录。','ACCOUNT_BUSY',409)
+            try:
+                refresh_app_credentials(saved,force=True,expired_cookie=snapshot['cookie'])
+            except AppLoginError as error:
+                required = isinstance(error,AppCredentialError) and error.login_required
+                raise CouponError(str(error),'APP_LOGIN_REQUIRED' if required else 'APP_REFRESH_FAILED',401 if required else 502) from error
+
     # This wallet entry was supplied by the user (dx.10086.cn/A/aIU7Gw).
     # Its public deep-link channel applies to operations entered through this URL,
     # independently of the account's private APP login cookie.
     coupon_uses = CouponUseManager(coupon_credentials, storage=database,
         payment_credentials_provider_by_id=unified.credentials,
-        wallet_entry='https://touch.10086.cn/i/mobile/mycoupons.html?channelId=P00000004912',credential_cache=credential_cache)
+        wallet_entry='https://touch.10086.cn/i/mobile/mycoupons.html?channelId=P00000004912',credential_cache=credential_cache,
+        app_session_recover=recover_coupon_app)
     app.extensions['coupon_uses'] = coupon_uses
 
     @app.post('/api/coupons/use/prepare')
@@ -679,13 +720,19 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                         pending = unified.pending.get(phone)
                     flow = pending if pending is not None else login_flow()
                     cookie = flow.login(phone, code)
-                    token = exchange_cookie(cookie)
-                    verify_token(token)
+                    token = ''
+                    if features.enabled('lingxi'):
+                        from feature_runtime import FeatureLease, feature_scope
+                        with feature_scope(FeatureLease(features, 'lingxi')):
+                            token = exchange_cookie(cookie)
+                            verify_token(token)
                     profile = dict(flow.user_info) if isinstance(flow.user_info, dict) else {}
                     context = flow.export_context()
                     saved = unified.remember(phone, cookie, profile, token, name.strip(),
                                              app_context=context if isinstance(context,dict) else None)
                     app.extensions['session_maintenance'].due.pop(saved.id, None)
+                    if restored := app.extensions.get('seven_day_login_restored'):
+                        restored(saved.id)
                     if not manage:
                         current = apply_login(current, saved)
             with accounts_lock:
@@ -718,6 +765,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             return jsonify(error='账号已退出，请重新登录。'), 400
         try:
             with unified.phone_lock(saved.phone):
+                if not features.enabled('lingxi'):
+                    refresh_app_credentials(saved,force=True)
                 ensure_token(saved,refresh=True)
                 restore_activity_sessions(saved)
             return jsonify(account=saved.public(), message='登录态有效，关联活动会话已恢复')
@@ -924,10 +973,12 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                                       app_prepare_provider=prepare_recharge_account)
         recharge.config.update(SESSION_COOKIE_NAME='recharge_session', SESSION_COOKIE_PATH='/recharge', WORKSPACE_ACCESS_GUARDED=True)
         app.extensions['recharge_app'] = recharge
+        features.install_gate(recharge, fixed_id='recharge')
         app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {'/recharge': recharge})
 
+    @features.scoped('recharge', skip_disabled=True)
     def restore_activity_sessions(saved):
-        if not enable_recharge:
+        if not enable_recharge or not features.enabled('recharge'):
             return
         from recharge.cmcc import ActivityError
         manager, scheduler = recharge.extensions['accounts'], recharge.extensions['scheduler']
@@ -990,7 +1041,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         errors = []
         try:
             refresh_app_credentials(saved)
-            ensure_token(saved)
+            if features.enabled('lingxi'):
+                ensure_token(saved)
         except (LingxiError,AppLoginError,RequestException) as error:
             errors.append(error)
         if not any(isinstance(e,AppCredentialError) and e.login_required for e in errors):
@@ -1095,9 +1147,32 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 return None
             return {**unified.credentials(login_id),'id':login_id}
 
+    def recover_activity_identity(snapshot):
+        saved = unified.get(snapshot['phone'])
+        if saved is None:
+            raise AppCredentialError('账号已退出，请重新选择账号。',login_required=True)
+        with unified.phone_lock(saved.phone):
+            if coupon_uses.busy_login(saved.id) or monthly_scheduler.busy_login(saved.id):
+                raise AppCredentialError('该账号正在用券或短信验证中，请完成后再恢复七日活动。')
+            refresh_app_credentials(saved,force=True,expired_cookie=snapshot['cookie'])
+    app.extensions['app_identity_recover'] = recover_activity_identity
+
     platforms = PlatformManager(app, root_dir=Path(activities.__file__).resolve().parent,
-                                storage=database, credentials=activity_credentials, accounts=unified.public)
+                                storage=database, credentials=activity_credentials, accounts=unified.public, features=features)
     app.extensions['platform_manager'] = platforms
+    features.bind_scheduler('lingxi', lingxi_scheduler, background=('tick',), workers=('_worker','_send_one'))
+    features.bind_scheduler('checkin', checkin_scheduler, background=('tick','check_startup','_enqueue'), workers=('_perform','_refresh'))
+    features.bind_scheduler('monthly-coupon', monthly_scheduler, background=('tick','check_startup','_queue'), workers=('_perform',))
+    features.bind_scheduler('star-day', star_scheduler, background=('tick','_queue'), workers=('_perform','calibrate'))
+    if enable_recharge:
+        features.bind_scheduler('recharge', recharge.extensions['scheduler'],
+            background=('tick','_sync_automatic'), workers=('_worker','_run_attempts'))
+    from navigation_status import register_navigation_status
+    issue_sources = {'lingxi': (lingxi_scheduler,'jobs'), 'checkin': (checkin_scheduler,'data'),
+        'monthly': (monthly_scheduler,'data'), 'star': (star_scheduler,'data'), 'coupons': (coupon_uses,'data')}
+    if enable_recharge:
+        issue_sources['recharge'] = (recharge.extensions['scheduler'],'jobs')
+    register_navigation_status(app,unified.public,issue_sources,platforms)
     app.extensions['session_maintenance'] = SessionMaintenance(unified, maintain_login)
     app.wsgi_app = AccessGate(app.wsgi_app, access_security)
     return app

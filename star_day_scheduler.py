@@ -8,6 +8,7 @@ import time
 from threading import Event, RLock, Thread
 
 from login_storage import LoginStorageError
+from feature_runtime import feature_running
 from recharge.cmcc import SHANGHAI
 from star_day_client import StarDayClient, StarDayError
 from star_day_auth import StarDaySessionCache, explain_rate_limit
@@ -342,6 +343,8 @@ class StarDayScheduler:
         job_id = job['id'] if job is not None else None
         submitted = set()
         def before_submit(action, period):
+            if not feature_running():
+                raise StarDayError('星动日已关闭，本次未提交。', 'JOB_STOPPED', 423, rejected=True)
             expected = r'\d{8}' if action == 'signin' else r'\d{6}'
             if action not in ('signin', 'benefit') or not isinstance(period, str) or not re.fullmatch(expected, period):
                 raise StarDayError('官方活动周期无效，本次没有提交。', 'INVALID_PERIOD', 502)

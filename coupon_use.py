@@ -109,12 +109,13 @@ def _choices(rule, amount_rule=None):
 
 class CouponUseManager:
     def __init__(self, credentials_provider_by_id, storage=None, *, payment_credentials_provider_by_id=None,
-                 wallet_entry=ENTRY, credential_cache=None):
+                 wallet_entry=ENTRY, credential_cache=None, app_session_recover=None):
         self.credentials = credentials_provider_by_id
         self.payment_credentials = payment_credentials_provider_by_id or credentials_provider_by_id
         self.storage = storage
         self.wallet_entry = wallet_entry
         self.credential_cache = credential_cache
+        self.app_session_recover = app_session_recover
         self.lock, self.operations = RLock(), {}
         self.payment_challenges = {}
         self.data = (storage.load_coupon_use_data() if storage is not None else None) or {}
@@ -185,7 +186,8 @@ class CouponUseManager:
     def query(self, login_id, *, state='available', page=1, sort='default'):
         """Do not reauthenticate a wallet while its coupon/SMS flow is live."""
         self._prune()
-        client = CouponClient(lambda: self.credentials(login_id),credential_cache=self.credential_cache)
+        client = CouponClient(lambda: self.credentials(login_id),credential_cache=self.credential_cache,
+            app_session_recover=(lambda snapshot:self.app_session_recover(login_id,snapshot)) if self.app_session_recover else None)
         with self.lock:
             operation = next((item for item in reversed(self.operations.values())
                 if item.login_id == login_id and item.context is not None and item.result is None), None)
@@ -239,7 +241,8 @@ class CouponUseManager:
         """Reconcile any coupon type through official records, without using it."""
         if record['state'] == 'submitted':
             return {'state':'unconfirmed', 'can_retry':False, 'message':'本次兑换仍在提交，请等待结果后再核实。'}
-        client = CouponClient(lambda:self.credentials(login_id), entry=self.wallet_entry, credential_cache=self.credential_cache)
+        client = CouponClient(lambda:self.credentials(login_id), entry=self.wallet_entry, credential_cache=self.credential_cache,
+            app_session_recover=(lambda snapshot:self.app_session_recover(login_id,snapshot)) if self.app_session_recover else None)
         found = None
         with client._session() as wallet:
             for state in ('available', 'history'):
@@ -575,7 +578,8 @@ class CouponUseManager:
                 if existing.context is not None and existing.result is None and time.monotonic() < existing.expires:
                     existing.current()
                     return deepcopy(existing.preview)
-        client = CouponClient(lambda: self.credentials(login_id), entry=self.wallet_entry,credential_cache=self.credential_cache)
+        client = CouponClient(lambda: self.credentials(login_id), entry=self.wallet_entry,credential_cache=self.credential_cache,
+            app_session_recover=(lambda snapshot:self.app_session_recover(login_id,snapshot)) if self.app_session_recover else None)
         context = client._session()
         http, user, current = context.__enter__()
         operation = SimpleNamespace(id=secrets.token_urlsafe(24), login_id=login_id, coupon_id=coupon_id, key=key,

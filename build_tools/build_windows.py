@@ -13,6 +13,7 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from runtime_paths import VERSION
+from build_tools.activity_resources import stage_activities
 
 
 def sha256(path):
@@ -82,8 +83,7 @@ def main():
         if activity_resources.resolve().parent != (ROOT/'.build').resolve():
             raise RuntimeError('Activity staging path escaped the build directory')
         shutil.rmtree(activity_resources)
-    shutil.copytree(ROOT/'activities', activity_resources,
-                    ignore=shutil.ignore_patterns('__pycache__', 'tests', 'android'))
+    stage_activities(ROOT, activity_resources)
     resources=[(ROOT/'static','static'),(ROOT/'templates','templates'),
         (ROOT/'app_login_public_key.json','.'),(assets,'desktop_assets'),
         (ROOT/'recharge/static','recharge/static'),(ROOT/'recharge/templates','recharge/templates'),

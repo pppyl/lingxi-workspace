@@ -2,10 +2,13 @@
   'use strict';
   const page = document.body.dataset.workspace;
   if (!page) return;
+  const currentFeature=document.body.dataset.checkinChannel?document.body.dataset.checkinChannel+'-checkin':({'chat':'lingxi','lingxi-tasks':'lingxi','recharge-tasks':'recharge'}[page]||page);
   const workspaceFetch=window.fetch.bind(window);
+  let featureReloading=false;
   window.fetch=async(...args)=>{
     const response=await workspaceFetch(...args);
     if(response.headers.get('X-Workspace-Access'))location.replace('/access?next='+encodeURIComponent(location.pathname+location.search));
+    if(response.headers.get('X-Workspace-Feature-Disabled')===currentFeature&&!featureReloading){featureReloading=true;location.reload();}
     return response;
   };
   const localHost=['localhost','127.0.0.1','[::1]'].includes(location.hostname);
@@ -70,8 +73,15 @@
   nav.addEventListener('click',event => { if(event.target.closest('[data-account-window]') && document.body.classList.contains('workspace-nav-open')) toggleNavigation(); });
   document.addEventListener('keydown',event => { if(event.key === 'Escape' && document.body.classList.contains('workspace-nav-open')) toggleNavigation(); });
   document.body.prepend(nav, topbar, shade);
+  for (const link of nav.querySelectorAll('a.workspace-nav-item, a.workspace-subnav-item')) {
+    link.dataset.issueKey = link.getAttribute('href');
+  }
+  nav.querySelector('.workspace-nav-group > summary').dataset.issueKey = '/lingxi/tasks';
+  nav.querySelector('button[data-account-window]').dataset.issueKey = 'accounts';
   import('/static/updates.js');
   import('/static/network.js');
+  import('/static/navigation-issues.js');
+  import('/static/features.js');
 
   const seasonalNavigation = nav.querySelector('#workspace-activity-navigation');
   let seasonalTimer;
@@ -80,12 +90,14 @@
     const active = platforms.filter(platform => platform.active);
     seasonalNavigation.replaceChildren(...active.filter(platform => platform.navigation !== 'checkin').map(platform => {
       const link = document.createElement('a'); link.href = platform.home;
+      link.dataset.issueKey = platform.home;
       link.className = 'workspace-nav-item'+(location.pathname === platform.home ? ' active' : '');
       if (location.pathname === platform.home) link.setAttribute('aria-current','page');
       link.innerHTML = icon('calendar');
       const label = document.createElement('span'); label.textContent = platform.title; link.append(label);
       return link;
     }));
+    window.dispatchEvent(new CustomEvent('workspace-navigation-changed'));
     const remaining = active.map(platform => Date.parse(platform.end_at)-Date.parse(platform.server_time)).filter(Number.isFinite);
     if (remaining.length) seasonalTimer = setTimeout(refreshSeasonalCampaign, Math.min(Math.max(0, Math.min(...remaining)), 2147483647));
   }

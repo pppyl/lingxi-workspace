@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .accounts import atomic_json
 from .cmcc import ActivityError, SHANGHAI, parse_server_time
+from feature_runtime import feature_running
 
 ACTIVE = {'preparing', 'armed', 'running', 'cancelling'}
 LOGIN_REQUIRED_MESSAGE = '共享账号需要恢复登录，恢复后自动加入周三领取。'
@@ -273,7 +274,7 @@ class ClaimScheduler:
         with self.lock:
             job = self.jobs[account_id]
             next_at = None
-            enabled = bool(job['enabled'] and job['weekly'] and state in {'success', 'exhausted', 'completed', 'missed'})
+            enabled = bool(job['enabled'] and job['weekly'] and state in {'success', 'exhausted', 'completed', 'missed', 'paused'})
             if enabled:
                 current = current or self.now()
                 next_at = parse_server_time(job['run_at']) + timedelta(days=7)
@@ -302,6 +303,9 @@ class ClaimScheduler:
         account = self.manager.get(account_id)
         client = account.client
         try:
+            if not feature_running():
+                self._finish(account_id, 'paused', '功能已关闭，本轮停止，预约配置已保留')
+                return
             if self.jobs[account_id].get('managed') and self.prepare_account is not None:
                 self.prepare_account(account)
             self._update(account_id, state='preparing', attempts=0, submissions=0, result=None,
@@ -328,13 +332,13 @@ class ClaimScheduler:
                 self._update(account_id, run_at=target.isoformat(), next_run_at=target.isoformat(),
                              message=f'该省官方 {state["start_hour"]}:00 开放，按官方时间执行', log=True)
             self._update(account_id, state='armed', message='准备就绪，等待执行时间')
-            while not cancellation.is_set() and not self.shutdown_event.is_set():
+            while not cancellation.is_set() and not self.shutdown_event.is_set() and feature_running():
                 remaining = (target - client.server_now()).total_seconds()
                 if remaining <= 0:
                     break
                 cancellation.wait(min(0.5, remaining))
-            if cancellation.is_set() or self.shutdown_event.is_set():
-                self._finish(account_id, 'cancelled', '已停止')
+            if cancellation.is_set() or self.shutdown_event.is_set() or not feature_running():
+                self._finish(account_id, 'paused' if not feature_running() else 'cancelled', '功能已关闭' if not feature_running() else '已停止')
                 return
             self._run_attempts(account_id, cancellation)
         except ActivityError as error:
@@ -354,8 +358,8 @@ class ClaimScheduler:
         baseline = client.total_submissions
         last_message = ''
         for attempt in range(1, settings['max_attempts'] + 1):
-            if cancellation.is_set() or self.shutdown_event.is_set():
-                self._finish(account_id, 'cancelled', '已停止')
+            if cancellation.is_set() or self.shutdown_event.is_set() or not feature_running():
+                self._finish(account_id, 'paused' if not feature_running() else 'cancelled', '功能已关闭' if not feature_running() else '已停止')
                 return
             self._update(account_id, state='running', attempts=attempt,
                          message=f'第 {attempt}/{settings["max_attempts"]} 轮执行', log=True)

@@ -1,5 +1,6 @@
 """One bounded, timed burst per account and daily flash round."""
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, wait
+from feature_runtime import ThreadPoolExecutor, feature_running
 from threading import Event, Lock
 import time
 
@@ -17,6 +18,8 @@ def run_flash_burst(prepared, settings, before_submit, cancelled, *, followup_se
     Each worker leases one prepared HTTP session. Queued calls are cancelled
     after a terminal reply; calls already sent are drained before closing it.
     """
+    original_cancelled = cancelled
+    cancelled = lambda: original_cancelled() or not feature_running()
     if not prepared.ready:
         return {**prepared.result, 'state': 'skipped', 'submitted': False,
                 'message': prepared.result[result_key+'_message'], 'attempt_count': 0, 'attempts': []}

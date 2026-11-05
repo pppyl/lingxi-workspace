@@ -95,3 +95,32 @@ else:
             self.close()
 
     requests = SimpleNamespace(Session=Session, Cookies=Cookies, RequestsError=RequestException)
+
+
+# Check at send time too: a feature can be switched off after preparation or
+# while another round is waiting. The primary shared-login transport is unscoped.
+from feature_runtime import current_feature
+
+_transport_requests = requests
+
+
+class FeatureSession(_transport_requests.Session):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._feature_lease = current_feature.get()
+
+    def request(self, *args, **kwargs):
+        lease = current_feature.get() or self._feature_lease
+        if lease is not None and not lease.allowed():
+            raise RequestException('功能已关闭，本次未发出业务请求。')
+        return super().request(*args, **kwargs)
+
+
+class FeatureRequests:
+    Session = FeatureSession
+
+    def __getattr__(self, name):
+        return getattr(_transport_requests, name)
+
+
+requests = FeatureRequests()
