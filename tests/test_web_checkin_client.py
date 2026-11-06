@@ -7,7 +7,7 @@ import unittest
 
 from http_transport import requests
 from credential_cache import CredentialCache
-from activities.web_checkin.client import (
+from activities.checkin_common.client import (
     WebCheckinClient, WebCheckinError, WebLoginManager, SCOPE, ENTRY, BASE,
     _encrypt, _decrypt, _json,
 )

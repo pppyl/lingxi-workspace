@@ -16,6 +16,10 @@ from lingxi_client import Account, LingxiError, chat, exchange_cookie, verify_to
 from app_login import AppLoginError, AppLoginSession, AppCredentialError
 from unified_logins import UnifiedLogins
 from login_storage import DatabaseLoginStorage, LoginStorageError
+from bill_query import register_bills
+from usage_query import register_usage
+from services_query import register_services
+from mobile_rights import register_mobile_rights
 from session_maintenance import SessionMaintenance
 from recharge.cmcc import ActivityError
 from lingxi_scheduler import LingxiScheduler, TaskError
@@ -112,9 +116,12 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 logged.auth_code, logged.verified = saved.token, bool(saved.token)
                 logged.app_cookie, logged.app_profile = saved.cookie, dict(saved.profile)
 
+    def app_verification_busy(login_id):
+        return coupon_uses.busy_login(login_id) or app.extensions['services_queries'].cancellations.busy_login(login_id)
+
     def refresh_app_credentials(saved, *, force=False, expired_cookie=None):
         with unified.phone_lock(saved.phone):
-            if coupon_uses.busy_login(saved.id):
+            if app_verification_busy(saved.id):
                 return
             snapshot = unified.credentials(saved.id)
             if snapshot is None:
@@ -326,7 +333,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
     @app.get('/api/coupons/accounts')
     def coupon_accounts():
-        return jsonify(accounts=unified.public())
+        return jsonify(accounts=unified.public(), reminders=coupon_reminder_summary())
 
     def notice_snapshots():
         with unified.lock:
@@ -353,7 +360,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if saved is None:
             raise CouponError('账号已退出，请重新选择账号。','ACCOUNT_NOT_FOUND',404)
         with unified.phone_lock(saved.phone):
-            if coupon_uses.busy_login(login_id):
+            if app_verification_busy(login_id):
                 raise CouponError('该账号正在验证码或用券流程中，请完成后再恢复登录。','ACCOUNT_BUSY',409)
             try:
                 refresh_app_credentials(saved,force=True,expired_cookie=snapshot['cookie'])
@@ -369,6 +376,11 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         wallet_entry='https://touch.10086.cn/i/mobile/mycoupons.html?channelId=P00000004912',credential_cache=credential_cache,
         app_session_recover=recover_coupon_app)
     app.extensions['coupon_uses'] = coupon_uses
+
+    def coupon_reminder_summary():
+        with coupon_uses.lock:
+            submissions = dict(coupon_uses.data)
+        return coupon_uses.reminders.summary([row['id'] for row in unified.public()], submissions)
 
     @app.post('/api/coupons/use/prepare')
     def coupon_use_prepare():
@@ -406,6 +418,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             result = coupon_uses.query(login_id, state=state, page=int(page), sort=sort)
         coupon_uses.bind_pending(login_id, result['items'])
         result['pending_orders'] = coupon_uses.pending(login_id)
+        result['reminder'] = coupon_reminder_summary()['accounts'].get(login_id)
         return jsonify(result)
 
     @app.get('/api/coupons/pending')
@@ -654,6 +667,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 saved = unified.get(phone)
                 if relogin and saved is not target:
                     return jsonify(error='账号已退出，请重新添加账号。'), 404
+                if saved and app_verification_busy(saved.id):
+                    return jsonify(error='该账号正在用券或业务退订验证中，请完成后再重新登录。', code='ACCOUNT_BUSY'), 409
                 if saved and saved.status != 'login_required' and not (relogin and value.get('force') is True):
                     try:
                         current = reuse_login(current, saved, activate=not manage)
@@ -713,6 +728,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 saved = unified.get(phone)
                 if relogin and saved is not target:
                     return jsonify(error='账号已退出，请重新添加账号。'), 404
+                if saved and app_verification_busy(saved.id):
+                    return jsonify(error='该账号正在用券或业务退订验证中，请完成后再重新登录。', code='ACCOUNT_BUSY'), 409
                 if saved and saved.status != 'login_required' and not (relogin and value.get('force') is True):
                     current = reuse_login(current, saved, activate=not manage)
                 else:
@@ -731,8 +748,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                     saved = unified.remember(phone, cookie, profile, token, name.strip(),
                                              app_context=context if isinstance(context,dict) else None)
                     app.extensions['session_maintenance'].due.pop(saved.id, None)
-                    if restored := app.extensions.get('seven_day_login_restored'):
-                        restored(saved.id)
+                    for hook in ('seven_day_login_restored', 'daily_gold_login_restored'):
+                        if restored := app.extensions.get(hook):
+                            restored(saved.id)
                     if not manage:
                         current = apply_login(current, saved)
             with accounts_lock:
@@ -780,12 +798,14 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     def clear_login_states(phone):
         saved=unified.get(phone)
         if saved is not None:
+            app.extensions['mobile_rights'].forget(saved.id)
             platforms.forget(saved.id)
             star_scheduler.forget(saved.id)
             monthly_scheduler.forget(saved.id)
             checkin_scheduler.forget(saved.id)
             lingxi_scheduler.cancel_login(saved.id)
             credential_cache.forget(saved.id)
+            coupon_uses.reminders.forget(saved.id)
         unified.forget(phone)
         for logged in all_chat_accounts():
             if logged.app_phone == phone:
@@ -797,6 +817,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         saved = unified.get_id(data.get('id'))
         if saved is None:
             return jsonify(error='账号已退出。'), 400
+        if app.extensions['mobile_rights'].busy_login(saved.id):
+            return jsonify(error='该账号正在连接权益会话、领取权益或发送活动验证码，请完成后退出。'),409
         if enable_recharge:
             from recharge.cmcc import ActivityError
             try:
@@ -804,6 +826,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             except ActivityError as exc:
                 return jsonify(error=str(exc)), exc.status
         else:
+            if app_verification_busy(saved.id):
+                return jsonify(error='该账号正在用券或业务退订验证中，请完成后退出。', code='ACCOUNT_BUSY'), 409
             if platforms.busy_login(saved.id):
                 return jsonify(error='该账号正在执行活动或短信验证，请完成后退出。'), 409
             if any(a.app_phone == saved.phone and a.lock.locked() for a in all_chat_accounts()):
@@ -817,6 +841,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if current.lock.locked():
             return jsonify(error="请先停止接收当前回复。"), 409
         if current.app_phone:
+            rights_saved=unified.get(current.app_phone)
+            if rights_saved is not None and app.extensions['mobile_rights'].busy_login(rights_saved.id):
+                return jsonify(error='该账号正在连接权益会话、领取权益或发送活动验证码，请完成后退出。'),409
             if enable_recharge:
                 try:
                     forget_app_login(current.app_phone)
@@ -826,6 +853,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                         return jsonify(error=str(exc)), exc.status
                     raise
             else:
+                saved = unified.get(current.app_phone)
+                if saved is not None and app_verification_busy(saved.id):
+                    return jsonify(error='该账号正在用券或业务退订验证中，请完成后退出。', code='ACCOUNT_BUSY'), 409
                 clear_login_states(current.app_phone)
         current.clear()
         with accounts_lock:
@@ -898,6 +928,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         def forget_locked_app_login(phone):
             from recharge.cmcc import ActivityError
             saved = unified.get(phone)
+            if saved is not None and app.extensions['mobile_rights'].busy_login(saved.id):
+                raise ActivityError('该账号正在连接权益会话、领取权益或发送活动验证码，请完成后退出。','ACCOUNT_BUSY',409)
+            if saved is not None and app_verification_busy(saved.id):
+                raise ActivityError('该账号正在用券或业务退订验证中，请完成后退出。', 'ACCOUNT_BUSY', 409)
             if saved is not None and platforms.busy_login(saved.id):
                 raise ActivityError('该账号正在执行活动或短信验证，请完成后退出。', 'ACCOUNT_BUSY', 409)
             if saved is not None and star_scheduler.busy_login(saved.id):
@@ -1026,7 +1060,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 return False
             if monthly_scheduler.busy_login(saved.id):
                 return False
-            if coupon_uses.busy_login(saved.id):
+            if app_verification_busy(saved.id):
                 return False
             if enable_recharge:
                 activity_manager = recharge.extensions['accounts']
@@ -1152,10 +1186,25 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if saved is None:
             raise AppCredentialError('账号已退出，请重新选择账号。',login_required=True)
         with unified.phone_lock(saved.phone):
-            if coupon_uses.busy_login(saved.id) or monthly_scheduler.busy_login(saved.id):
-                raise AppCredentialError('该账号正在用券或短信验证中，请完成后再恢复七日活动。')
+            if app_verification_busy(saved.id) or monthly_scheduler.busy_login(saved.id):
+                raise AppCredentialError('该账号正在用券或短信验证中，请完成后再恢复 APP 会话。')
             refresh_app_credentials(saved,force=True,expired_cookie=snapshot['cookie'])
     app.extensions['app_identity_recover'] = recover_activity_identity
+
+    def accept_bill_credentials(snapshot, flow):
+        updated = unified.rotate_credentials(snapshot['phone'], expected_revision=snapshot['credential_revision'],
+            cookie=flow.cookie, app_context=flow.export_context(), profile=flow.user_info)
+        if updated is not None:
+            sync_chat_credentials(updated)
+
+    register_bills(app, unified.public, unified.credentials, recover=recover_activity_identity,
+                   accept_credentials=accept_bill_credentials)
+    register_usage(app, unified.public, unified.credentials, recover=recover_activity_identity,
+                   accept_credentials=accept_bill_credentials)
+    register_services(app, unified.public, unified.credentials, recover=recover_activity_identity,
+                      accept_credentials=accept_bill_credentials)
+    register_mobile_rights(app, unified.public, unified.credentials, storage=database, cache=credential_cache,
+                           recover=recover_activity_identity, accept_credentials=accept_bill_credentials)
 
     platforms = PlatformManager(app, root_dir=Path(activities.__file__).resolve().parent,
                                 storage=database, credentials=activity_credentials, accounts=unified.public, features=features)
@@ -1169,9 +1218,11 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             background=('tick','_sync_automatic'), workers=('_worker','_run_attempts'))
     from navigation_status import register_navigation_status
     issue_sources = {'lingxi': (lingxi_scheduler,'jobs'), 'checkin': (checkin_scheduler,'data'),
-        'monthly': (monthly_scheduler,'data'), 'star': (star_scheduler,'data'), 'coupons': (coupon_uses,'data')}
+        'monthly': (monthly_scheduler,'data'), 'star': (star_scheduler,'data'), 'coupons': (coupon_uses,'data'),
+        'coupon_reminders': (coupon_uses.reminders,'data')}
     if enable_recharge:
         issue_sources['recharge'] = (recharge.extensions['scheduler'],'jobs')
+        issue_sources['wed_checkin'] = (recharge.extensions['continuous_checkin'],'data')
     register_navigation_status(app,unified.public,issue_sources,platforms)
     app.extensions['session_maintenance'] = SessionMaintenance(unified, maintain_login)
     app.wsgi_app = AccessGate(app.wsgi_app, access_security)

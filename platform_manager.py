@@ -67,7 +67,7 @@ class PlatformManager:
             controller = import_module(module).register(app, credentials, accounts, storage)
             entry['controller'] = controller
             if features is not None:
-                api = {'web-checkin':'/api/checkin-web', 'wechat-checkin':'/api/checkin-wechat'}.get(platform_id, '/api/'+platform_id)
+                api = {'wechat-checkin':'/api/checkin-wechat'}.get(platform_id, '/api/'+platform_id)
                 features.register(platform_id, title, home, (home, api), temporary=entry['temporary'], platform=entry)
                 scheduler = controller.scheduler
                 # Optional modules use these scheduler entry points. Newly
@@ -117,7 +117,7 @@ class PlatformManager:
                 if platform_id not in known:
                     rows.append({**deepcopy(tombstone), 'id': platform_id, 'state': 'deleted',
                                  'active': False, 'server_time': self.now().isoformat()})
-            return rows
+            return self.features.order_rows(rows) if self.features is not None else rows
 
     def tick(self):
         with self.lock:

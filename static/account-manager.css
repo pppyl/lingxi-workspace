@@ -1,9 +1,9 @@
-.account-manager-dialog{width:min(1500px,calc(100vw - 32px));max-width:none;max-height:90dvh;padding:0;border:1px solid #dfe7f2;border-radius:12px;background:#f4f7fb;color:#243c5b;font:14px/1.6 Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;box-shadow:0 24px 100px #172b4d30;overflow:auto}
+.account-manager-dialog{width:min(1500px,calc(100vw - 32px));max-width:none;max-height:90dvh;padding:0;border:1px solid #dfe7f2;border-radius:12px;background:#f4f7fb;color:#243c5b;font:14px/1.6 Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;box-shadow:0 24px 100px #172b4d30;overflow:auto;scroll-padding-top:80px}
 .account-manager-dialog::backdrop{background:#132a4d61;backdrop-filter:blur(3px)}
 html:has(.account-manager-dialog[open]),html:has(.account-manager-dialog[open]) body{overflow:hidden}
 .account-manager-dialog *{box-sizing:border-box}
-.account-manager-dialog .account-shell{max-width:none;width:100%;margin:0;padding:27px}
-.account-manager-dialog .portal-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0;border:0;background:transparent}
+.account-manager-dialog .account-shell{max-width:none;width:100%;margin:0;padding:0 27px 27px}
+.account-manager-dialog .portal-header{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;padding:8px 0;border:0;border-bottom:1px solid #e1e8f2;background:#f4f7fb}
 .account-manager-dialog .portal-header h2{font-size:21px;font-weight:650;margin:0;color:#223b5b}
 .account-manager-dialog .account-manager-close{padding:2px 10px;font-size:27px;line-height:1.2;color:#8fa1b9;background:transparent;border:0;border-radius:6px;cursor:pointer}
 .account-manager-dialog .account-manager-close:hover{background:#e6eefb;color:#367de7}
@@ -70,5 +70,6 @@ html:has(.account-manager-dialog[open]),html:has(.account-manager-dialog[open]) 
 .account-table .row-actions button{margin:0;padding:5px 8px;font-size:11px;line-height:1.6;white-space:nowrap}
 .account-table .account-table-empty{text-align:center;background:#fff;padding:42px 18px;color:#97a7bc}
 .account-shell .login-panel{position:sticky;top:18px;min-width:0}
+.account-manager-dialog .login-panel{top:80px}
 @media(max-width:1050px){.account-shell .manager-grid{grid-template-columns:minmax(0,1fr)}.account-shell .login-panel{position:static;grid-row:1}.account-shell .login-panel form{max-width:560px}}
-@media(max-width:760px){.account-manager-dialog{width:calc(100vw - 20px);max-height:92dvh}.account-manager-dialog .account-shell{padding:21px 17px}.account-manager-dialog .manager-grid{grid-template-columns:1fr;gap:14px}.account-manager-dialog .pool-panel{padding:19px}.account-manager-dialog .account-pool-panel{padding:0}.account-pool-panel>.panel-title{padding:17px 18px}}
+@media(max-width:760px){.account-manager-dialog{width:calc(100vw - 20px);max-height:92dvh}.account-manager-dialog .account-shell{padding:0 17px 21px}.account-manager-dialog .manager-grid{grid-template-columns:1fr;gap:14px}.account-manager-dialog .pool-panel{padding:19px}.account-manager-dialog .account-pool-panel{padding:0}.account-pool-panel>.panel-title{padding:17px 18px}}

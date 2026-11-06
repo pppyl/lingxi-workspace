@@ -41,6 +41,13 @@ def encoded(data, *, gcm=False):
 class Storage:
     def __init__(self, data=None):
         self.data, self.writes, self.fail = deepcopy(data or {}), [], False
+        self.activities = {}
+
+    def load_activity_data(self, scope):
+        return deepcopy(self.activities.get(scope))
+
+    def save_activity_data(self, scope, data):
+        self.activities[scope] = deepcopy(data)
 
     def load_coupon_use_data(self):
         return deepcopy(self.data)

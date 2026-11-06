@@ -10,15 +10,15 @@ class Element {
   insertBefore(child,before) { const index=this.children.indexOf(before);if(index<0)this.children.push(child);else this.children.splice(index,0,child); }
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-async function fixture(initial={'/seven-day':3}) {
-  const items=[new Element('/seven-day'),new Element('/lingxi/tasks'),new Element('/lingxi/tasks'),new Element('accounts')];
+async function fixture(initial={'/seven-day':3},couponTotal=0) {
+  const items=[new Element('/seven-day'),new Element('/lingxi/tasks'),new Element('/lingxi/tasks'),new Element('accounts'),new Element('/coupons')];
   const events={},timers=[],calls=[];
   const document={hidden:false,getElementById:()=>({querySelectorAll:()=>items}),createElement:()=>new Element(),addEventListener:(name,fn)=>{events[name]=fn;}};
-  const control={counts:initial,ok:true,wait:null};
+  const control={counts:initial,couponTotal,ok:true,wait:null};
   const fetch=async(url,options)=>{
     calls.push({url,options});const counts={...control.counts},wait=control.wait;control.wait=null;
     if(wait)await wait;
-    return {ok:control.ok,json:async()=>({counts})};
+    return {ok:control.ok,json:async()=>({counts,coupon_reminders:{total:control.couponTotal}})};
   };
   vm.runInNewContext(fs.readFileSync(new URL('../static/navigation-issues.js',import.meta.url),'utf8'),{
     document,window:{addEventListener:(name,fn)=>{events[name]=fn;}},fetch,setInterval:fn=>timers.push(fn),
@@ -26,6 +26,17 @@ async function fixture(initial={'/seven-day':3}) {
   await flush();return {items,events,timers,calls,control,document};
 }
 const badge=item=>item.querySelector('.workspace-issue-badge');
+
+test('wallet useful coupon total updates independently of failure badges through a local-only read',async()=>{
+  const {items,control,events,calls}=await fixture({'/coupons':1},14);
+  const wallet=items[4],coupons=wallet.querySelector('.workspace-coupon-badge');
+  assert.equal(coupons.hidden,false);assert.equal(coupons.textContent,'14');
+  assert.match(coupons.attributes['aria-label'],/14 张可用优惠话费券/);
+  assert.equal(badge(wallet).textContent,'1','the failure count keeps its original meaning');
+  control.couponTotal=0;await events['coupon-reminders-changed']();
+  assert.equal(coupons.hidden,true);assert.equal(wallet.children.length,2);
+  assert.ok(calls.every(call=>call.url==='/api/navigation/issues'));
+});
 
 test('sidebar shows the exact failure count with an accessible alert and hides zero counts',async()=>{
   const {items,calls}=await fixture({'/seven-day':123,'/lingxi/tasks':2});

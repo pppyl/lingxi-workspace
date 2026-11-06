@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>信息查询 · 本地工具台</title><link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/bills.css?v=services-search-1">
+  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/bills.js?v=services-search-1" defer></script>
+  <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
+  <script src="/static/mobile.js?v=mobile-1" defer></script>
+</head>
+<body class="workspace-app" data-workspace="bills"><main class="portal-shell bills-shell">
+  <section class="bills-heading"><div><h1>信息查询</h1><p id="information-current-account" class="information-current-account">尚未选择账号</p></div><button id="bills-refresh" class="secondary" type="button">刷新信息</button></section>
+  <section class="bills-account-panel" aria-label="选择查询账号">
+    <div class="bills-account-heading"><h2>共享账号 <span id="bills-account-count">—</span></h2><span id="bills-account-hint">正在读取账号…</span></div>
+    <div id="bills-accounts" class="bills-accounts" role="group" aria-label="信息查询账号"></div>
+  </section>
+  <div id="information-feedback" class="bills-feedback" role="status" hidden><p id="information-feedback-message"></p></div>
+  <nav class="information-section-nav" aria-label="查询内容"><a href="#usage-content">套餐余量</a><a href="#bills-content">月度账单</a><a href="#services-content">已订业务</a></nav>
+  <div class="information-columns">
+  <section id="usage-content" class="usage-panel" aria-label="套餐余量" aria-busy="false">
+    <div class="usage-toolbar"><div><h2>套餐余量</h2><span id="usage-current-account" class="bills-visually-hidden">尚未选择账号</span></div></div>
+    <div id="usage-feedback" class="bills-feedback" role="status" hidden><p id="usage-feedback-message"></p><button id="usage-relogin" class="secondary" type="button" hidden>恢复登录</button></div>
+    <div class="usage-overview-labels" aria-hidden="true"><span>资源</span><span>总量</span><span>已用</span><span>剩余</span></div>
+    <div id="usage-overview" class="usage-overview" aria-label="套餐余量概览"><p class="bills-empty">正在读取共享账号…</p></div>
+    <section class="usage-detail-section" aria-label="套餐余量明细"><div class="usage-details-heading"><h3>套餐明细</h3><span>展开查看用量及有效期</span></div><div id="usage-groups" class="usage-groups"></div></section>
+    <details id="usage-notes" class="bills-notes" aria-label="官方余量说明" hidden><summary>官方说明</summary><ul id="usage-notes-list"></ul></details>
+    <div class="bills-footer"><span id="usage-sync" role="status" aria-live="polite">尚未查询套餐余量</span></div>
+  </section>
+  <section id="bills-content" class="bills-panel" aria-label="月度账单" aria-busy="false">
+    <div class="bills-toolbar">
+      <div class="bills-current"><h2 id="bills-title">月度账单</h2><span id="bills-current-account" class="bills-visually-hidden">尚未选择账号</span></div>
+      <div class="bills-month-controls" role="group" aria-label="切换账单月份"><button id="bills-previous" class="quiet" type="button" aria-label="查看上一个可查月份" disabled>‹</button><label for="bills-month" class="bills-visually-hidden">选择月份</label><select id="bills-month" disabled><option value="">选择月份</option></select><button id="bills-next" class="quiet" type="button" aria-label="查看下一个可查月份" disabled>›</button></div>
+    </div>
+    <div id="bills-feedback" class="bills-feedback" role="status" hidden><p id="bills-feedback-message"></p><button id="bills-relogin" class="secondary" type="button" hidden>恢复登录</button></div>
+    <div id="bills-months" class="bills-months" role="group" aria-label="快速选择账单月份"></div>
+    <div class="bills-columns">
+    <div class="bills-overview-column">
+    <div class="bills-overview">
+      <section class="bills-summary" aria-label="账单金额摘要">
+        <div class="bills-consumption"><span>本号码共消费</span><span><strong id="bills-total">—</strong> 元</span></div>
+        <div class="bills-payable"><h3>实际应付 <span>元</span></h3><strong id="bills-payable">—</strong></div>
+        <div class="bills-breakdown" aria-label="费用构成">
+          <div><span>优惠前金额</span><strong id="bills-original">—</strong></div>
+          <div><span>优惠减免</span><strong id="bills-discount">—</strong></div>
+          <div><span>返费抵扣</span><strong id="bills-rebate">—</strong></div>
+        </div>
+      </section>
+      <div class="bills-balance"><span class="bills-balance-label">当前账户余额 <small>元</small></span><strong id="bills-balance">—</strong><span class="bills-balance-note">余额为查询时的实时信息</span></div>
+    </div>
+    </div>
+    <section class="bills-detail-column" aria-label="费用明细卡片">
+    <div class="bills-details-heading"><div><h2>费用明细</h2><span id="bills-period">选择账号和月份后查看</span></div><div class="bills-details-actions"><button id="bills-expand" class="quiet" type="button" disabled>展开全部</button><button id="bills-collapse" class="quiet" type="button" disabled>收起明细</button></div></div>
+    <div id="bills-items" class="bills-detail-grid" aria-label="账单费用分层明细"><p class="bills-empty">正在读取共享账号…</p></div>
+    </section>
+    </div>
+    <details class="bills-additional"><summary>其他账单信息</summary>
+    <dl id="bills-extra-summary" class="bills-extra-summary" aria-label="更多账单摘要" hidden></dl>
+    </details>
+    <details id="bills-notes" class="bills-notes" aria-label="官方账单说明" hidden><summary>官方说明</summary><ul id="bills-notes-list"></ul></details>
+    <div class="bills-footer"><span id="bills-sync" role="status" aria-live="polite">尚未查询账单</span></div>
+  </section>
+  <section id="services-content" class="services-panel" aria-label="已订业务" aria-busy="false">
+    <div class="services-toolbar"><div><h2>已订业务</h2><span id="services-current-account" class="bills-visually-hidden">尚未选择账号</span></div></div>
+    <div id="services-feedback" class="bills-feedback" role="status" hidden><p id="services-feedback-message"></p><button id="services-relogin" class="secondary" type="button" hidden>恢复登录</button></div>
+    <div class="services-search-tools">
+      <label class="services-search-field"><span class="bills-visually-hidden">搜索已订业务</span><input id="services-search" type="search" placeholder="搜索业务名称或说明" autocomplete="off" maxlength="100" aria-controls="services-groups"></label>
+      <div class="services-search-options"><label><input id="services-cancel-only" type="checkbox">仅看可退订</label><span id="services-filter-count" role="status" aria-live="polite"></span></div>
+    </div>
+    <div id="services-tabs" class="services-tabs" role="tablist" aria-label="已订业务分类"></div>
+    <div id="services-groups" class="services-groups" role="tabpanel" aria-label="已订业务内容"><p class="services-empty">正在读取共享账号…</p></div>
+    <details id="services-notes" class="bills-notes" aria-label="官方业务说明" hidden><summary>官方说明</summary><ul id="services-notes-list"></ul></details>
+    <div class="bills-footer"><span id="services-sync" role="status" aria-live="polite">尚未查询已订业务</span></div>
+  </section>
+  </div>
+  <p class="bills-footnote">余量和已订业务为查询时的当前信息，账单按所选月份展示；“—”表示官方未提供该项信息。</p>
+</main>
+<dialog id="services-cancel-dialog" class="services-cancel-dialog" aria-labelledby="services-cancel-title">
+  <header class="services-cancel-heading"><div><h2 id="services-cancel-title">退订确认</h2><p id="services-cancel-account"></p></div><button id="services-cancel-close" class="quiet services-cancel-close" type="button" aria-label="关闭退订确认">×</button></header>
+  <h3 id="services-cancel-name"></h3>
+  <div id="services-cancel-info" hidden>
+    <div id="services-cancel-warnings" class="services-cancel-warnings"></div>
+    <div id="services-cancel-related" class="services-cancel-related"></div>
+    <p id="services-cancel-description" class="services-cancel-description"></p>
+    <p id="services-cancel-effective" class="services-cancel-effective"></p>
+    <div id="services-cancel-sms-group"><label class="services-cancel-label" for="services-cancel-code">短信验证码</label><div class="services-cancel-code-row"><input id="services-cancel-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="输入本次退订验证码"><button id="services-cancel-sms" class="secondary" type="button">获取验证码</button></div><p class="services-cancel-help">验证码有效期 5 分钟；退订生效时间以官方短信通知为准。</p></div>
+  </div>
+  <p id="services-cancel-message" class="services-cancel-message" role="status" aria-live="polite" hidden></p>
+  <footer class="services-cancel-footer"><button id="services-cancel-dismiss" class="secondary" type="button">取消</button><button id="services-cancel-submit" type="button" disabled>确认退订</button></footer>
+</dialog></body>
+</html>

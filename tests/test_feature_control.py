@@ -39,6 +39,48 @@ class FeatureControlTests(unittest.TestCase):
         self.assertFalse(restored.enabled('star-day'))
         self.assertTrue(restored.enabled('lingxi'))
 
+    def test_custom_order_survives_restart_without_touching_switches_or_leases(self):
+        self.control.set_enabled('star-day',False)
+        lease=FeatureLease(self.control,'lingxi')
+        ids=self.control.default_order();ordered=[ids[-1],*ids[:-1]]
+        response=self.app.test_client().post('/api/features/order',json={'feature_ids':ordered})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual([row['id'] for row in response.json['features']],ordered)
+        self.assertEqual(response.json['default_order'],ids)
+        self.assertTrue(lease.allowed());self.business.assert_not_called()
+        restored=FeatureControl(Flask('reordered'),self.store)
+        self.assertEqual([row['id'] for row in restored.public()],ordered)
+        self.assertFalse(restored.enabled('star-day'))
+
+    def test_order_validation_never_discards_features_and_defaults_can_be_restored(self):
+        client=self.app.test_client();ids=self.control.default_order()
+        for payload in (None,{}, {'feature_ids':'wrong'},{'feature_ids':[ids[0],ids[0]]},{'feature_ids':[None]}):
+            self.assertEqual(client.post('/api/features/order',json=payload).status_code,400)
+        for values in (ids[:-1],[*ids,'unknown']):
+            self.assertEqual(client.post('/api/features/order',json={'feature_ids':values}).status_code,409)
+        self.assertNotIn('feature-order',self.store.data)
+        client.post('/api/features/order',json={'feature_ids':list(reversed(ids))})
+        result=client.post('/api/features/order',json={'feature_ids':ids})
+        self.assertEqual([row['id'] for row in result.json['features']],ids)
+
+    def test_new_modules_append_and_removed_modules_do_not_block_future_ordering(self):
+        client=self.app.test_client();ids=self.control.default_order()
+        client.post('/api/features/order',json={'feature_ids':list(reversed(ids))})
+        platform={'state':'running','metadata':{},'navigation':'main'}
+        self.control.register('extra','活动','/extra',('/extra',),platform=platform)
+        self.assertEqual(self.control.public()[-1]['id'],'extra')
+        new_order=['extra',*reversed(ids)]
+        self.assertEqual(client.post('/api/features/order',json={'feature_ids':new_order}).status_code,200)
+        platform['state']='deleted'
+        self.assertNotIn('extra',self.control.default_order())
+        self.assertEqual(client.post('/api/features/order',json={'feature_ids':ids}).status_code,200)
+
+    def test_corrupt_order_is_not_silently_overwritten(self):
+        self.store.data['feature-order']=['lingxi','lingxi']
+        from login_storage import LoginStorageError
+        with self.assertRaises(LoginStorageError):FeatureControl(Flask('bad-order'),self.store)
+        self.assertEqual(self.store.data['feature-order'],['lingxi','lingxi'])
+
     def test_disabled_api_never_enters_business_and_returns_specific_reason(self):
         self.control.set_enabled('star-day', False)
         response = self.app.test_client().get('/api/star-day/probe')

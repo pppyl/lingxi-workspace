@@ -1,5 +1,7 @@
 # 网页渠道签到协议核对
 
+> 网页渠道签到独立模块已移除，以下保留协议分析历史供微信渠道维护参考。当前仅提供主签到和微信渠道签到；公共协议代码保留在 `activities/checkin_common`，没有网页渠道后台任务或入口。
+
 入口：`https://wx.10086.cn/qwhdhub/qwhdmark/1021122301`。
 
 该 URL 与主签到相同，服务器会依据登录渠道选择不同业务。APP 身份在官方前端走 `mark31/markstatus`、`mark31/domark`；非 APP 身份使用 `info/prizeInfo` 的 `todayMarked`、`markedTimes`、`totalMarkTimes`，签到为 `do/mark`，空 JSON 请求。不能把主签到的日历记录复制为新渠道进度。

@@ -124,8 +124,17 @@ def guizhou_session(credentials_provider,entry_url,*,session_factory=None,creden
         if credential_cache is None:
             _guizhou_login(client,snapshot,credentials_provider,entry_url)
         else:
-            credential_cache.connect(PLATFORM+'|'+entry_url,snapshot,client,
-                lambda:_guizhou_login(client,snapshot,credentials_provider,entry_url),headers=('AuthorizationAweb',))
+            # The provincial bearer is accepted by both grcNew and templet/act.
+            # Keep page attribution on requests, while sharing the auth realm.
+            owner = credential_cache.account(snapshot)
+            with credential_cache.lock:
+                aliases = [scope for scope, login_id in credential_cache.entries if login_id == owner]
+            if credential_cache.storage:
+                aliases.extend(credential_cache.storage.credential_scopes(owner))
+            credential_cache.connect(PLATFORM,snapshot,client,
+                lambda:_guizhou_login(client,snapshot,credentials_provider,entry_url),
+                headers=('AuthorizationAweb',),
+                aliases=tuple(scope for scope in set(aliases) if scope.startswith(PLATFORM+'|')))
         yield client
     finally:
         client.close()

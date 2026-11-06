@@ -8,6 +8,8 @@
   <link rel="icon" href="data:,">
   {% if unified_login %}<link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="{{ url_for('static', filename='workspace.css') }}"><script src="/static/workspace.js" defer></script><script src="{{ url_for('static', filename='workspace.js') }}" type="module"></script>{% else %}<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"><script src="{{ url_for('static', filename='app.js') }}" defer></script>{% endif %}
   {% if unified_login %}<script src="/static/account-window.js" defer></script>{% endif %}
+  <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
+  <script src="/static/mobile.js?v=mobile-1" defer></script>
 </head>
 <body{% if unified_login %} class="workspace-app" data-workspace="recharge"{% endif %}>{{ activity_markup | safe }}<noscript>请启用 JavaScript 使用活动页面。</noscript></body>
 </html>

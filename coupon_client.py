@@ -267,7 +267,7 @@ class CouponClient:
         finally:
             client.close()
 
-    def query(self, *, state='available', page=1, sort='default', wallet_session=None, recover_login=True):
+    def query(self, *, state='available', page=1, sort='default', wallet_session=None, recover_login=True, observe=None):
         with (self._session(recover_login=recover_login) if wallet_session is None else nullcontext(wallet_session)) as (client, user, current):
             for attempt in range(2):
                 try:
@@ -277,7 +277,7 @@ class CouponClient:
                     queries = [dict(status='1,8,9,21', sortType=SORTS[sort])] if state == 'available' else [
                         dict(status=status, sortType=order, qryType=source, page=page-1)
                         for status, order in [('10', '3'), ('4,5,11,22', '4')] for source in ('0', '1')]
-                    items, total, more = [], 0, False
+                    items, raw_items, total, more = [], [], 0, False
                     for query in queries:
                         current()
                         body = {'loginNo': number, 'loginType': user['login_type'], 'channelId': '11',
@@ -290,12 +290,15 @@ class CouponClient:
                             raise CouponError('官方未返回卡券列表，本次查询未完成。', 'LIST_MISSING')
                         rows = [row for group in groups for row in group.get('batchInfo', [])]
                         items.extend(_item(row) for row in rows)
+                        raw_items.extend(rows)
                         count = data.get('totalNum')
                         total = total+int(count) if total is not None and count is not None else None
                         if state == 'history':
                             pages = data.get('totlePage')
                             more |= page < int(pages) if pages is not None else bool(rows)
                     current()
+                    if observe is not None:
+                        observe(items, raw_items, client, user, current)
                     return {'items': list({item['id']: item for item in items}.values()), 'page': page,
                             'total': total, 'has_more': more}
                 except CouponError as error:

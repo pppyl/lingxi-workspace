@@ -1,8 +1,0 @@
-{
-  "id": "web-checkin",
-  "title": "网页渠道签到",
-  "home": "/checkin/web",
-  "module": "activities.web_checkin.plugin",
-  "temporary": false,
-  "navigation": "checkin"
-}

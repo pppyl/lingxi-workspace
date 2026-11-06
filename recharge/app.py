@@ -10,6 +10,7 @@ from flask import Flask, jsonify, render_template, request, session, redirect, u
 from .cmcc import ActivityError, ENTRY, ROOT
 from .accounts import AccountManager
 from .scheduler import ClaimScheduler
+from .checkin import ContinuousCheckin
 from network_access import allowed_lan_host
 
 
@@ -52,6 +53,10 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
 
     if app_accounts_provider is not None:
         scheduler.configure_automatic(app_accounts_provider, ensure_shared_account, app_prepare_provider)
+        scheduler.daily = ContinuousCheckin(app_accounts_provider,ensure_shared_account,
+            storage=manager.database,shutdown=scheduler.shutdown_event,now=scheduler.now,
+            weekly_busy=lambda account_id:account_id in scheduler.workers)
+        app.extensions['continuous_checkin']=scheduler.daily
 
     def account_for_request():
         data = request.get_json(silent=True) or {}
@@ -146,6 +151,7 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
             if item is not None and item['status'] != 'active':
                 account.update(authenticated=False, session_status='login_required')
         return jsonify(accounts=directory, jobs=scheduler.snapshots(), logins=shared,
+                       checkin=scheduler.daily.snapshots() if scheduler.daily else None,
                        warning=manager.load_error or scheduler.load_error,
                        timezone='Asia/Shanghai', automatic=app_accounts_provider is not None,
                        prepare_time='07:55', run_time='08:00', server_time=scheduler.now().isoformat())
@@ -153,6 +159,25 @@ def create_app(client=None, *, manager=None, scheduler=None, app_login_provider=
     @app.get('/api/logins')
     def shared_logins():
         return jsonify(accounts=app_accounts_provider() if app_accounts_provider else [])
+
+    @app.get('/api/checkin')
+    def checkin_status():
+        if scheduler.daily is None:raise ActivityError('连续打卡需使用共享账号。','SHARED_ACCOUNTS_REQUIRED',409)
+        return jsonify(scheduler.daily.snapshots())
+
+    @app.post('/api/checkin/settings')
+    def checkin_settings():
+        if scheduler.daily is None:raise ActivityError('连续打卡需使用共享账号。','SHARED_ACCOUNTS_REQUIRED',409)
+        return jsonify(scheduler.daily.configure(request.get_json()))
+
+    @app.post('/api/checkin/run')
+    def checkin_run():
+        if scheduler.daily is None:raise ActivityError('连续打卡需使用共享账号。','SHARED_ACCOUNTS_REQUIRED',409)
+        data=request.get_json()
+        if not isinstance(data.get('login_id'),str) or type(data.get('submit',False)) is not bool:
+            raise ActivityError('请选择有效账号。','INVALID_REQUEST')
+        result=scheduler.daily.run(data['login_id'],submit=data.get('submit',False))
+        return jsonify(result),400 if result.get('error') else 200
 
     @app.post('/api/login/attach')
     def attach_shared_login():

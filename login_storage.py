@@ -144,6 +144,15 @@ class DatabaseLoginStorage:
             connection.execute('INSERT INTO update_check(id,payload) VALUES(1,?) '
                 'ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (json.dumps(data, ensure_ascii=False),))
 
+    def credential_scopes(self, login_id):
+        """List realm names only, so compatible legacy sessions can be reused."""
+        try:
+            with self.lock, self._connect() as connection:
+                return [row[0] for row in connection.execute(
+                    'SELECT scope FROM credential_sessions WHERE login_id=?', (login_id,))]
+        except sqlite3.Error as error:
+            raise LoginStorageError('活动凭据索引读取失败，已保留原数据库。') from error
+
     def load_credentials(self, scope, login_id):
         try:
             with self.lock, self._connect() as connection:

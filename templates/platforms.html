@@ -1,13 +1,16 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>平台管理 · 本地工具台</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/platforms.css"><link rel="stylesheet" href="/static/access.css"><script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/access.js" defer></script><script src="/static/platforms.js" defer></script></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>平台管理 · 本地工具台</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/platforms.css"><link rel="stylesheet" href="/static/access.css"><script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/access.js" defer></script><script src="/static/platforms.js" defer></script>  <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
+  <script src="/static/mobile.js?v=mobile-1" defer></script>
+</head>
 <body class="workspace-app" data-workspace="platforms"><main class="portal-shell platforms-shell">
   <header class="platforms-heading"><div><h1>平台管理</h1><p>管理活动入口与运行状态，短期活动结束后自动停止。</p></div><button type="button" class="secondary" id="platforms-refresh">刷新</button></header>
   <p id="platforms-feedback" class="platforms-feedback" role="status" hidden></p>
+  <section id="updates-settings" class="platforms-panel update-settings" aria-label="版本更新"></section>
   <section id="feature-settings" class="platforms-panel" aria-label="功能开关">
     <div class="platforms-panel-heading"><h2>功能开关 <span id="platforms-count">0</span></h2><p>关闭后停止后台任务与业务请求，配置和记录保留；重新开启立即生效。</p></div>
-    <div class="platforms-table-wrap"><table class="platforms-table"><thead><tr><th scope="col">功能名称</th><th scope="col">类型</th><th scope="col">运行状态</th><th scope="col">结束时间 · 北京时间</th><th scope="col">启用</th><th scope="col">操作</th></tr></thead><tbody id="platforms-rows"><tr><td colspan="6" class="platforms-empty">正在读取功能…</td></tr></tbody></table></div>
+    <div class="platforms-order-toolbar"><p>拖动或使用上下按钮调整顺序，自动保存并同步导航；子功能保留原有归属。</p><button id="platforms-order-reset" class="secondary" type="button" disabled>恢复默认顺序</button></div>
+    <div class="platforms-table-wrap"><table class="platforms-table"><thead><tr><th scope="col">功能名称</th><th scope="col">类型</th><th scope="col">运行状态</th><th scope="col">结束时间 · 北京时间</th><th scope="col">启用</th><th scope="col">排序</th><th scope="col">操作</th></tr></thead><tbody id="platforms-rows"><tr><td colspan="7" class="platforms-empty">正在读取功能…</td></tr></tbody></table></div>
   </section>
-  <section id="updates-settings" class="platforms-panel update-settings" aria-label="版本更新"></section>
   <section class="platforms-panel network-settings" aria-labelledby="network-title">
     <div class="platforms-panel-heading"><h2 id="network-title">网络监听</h2><p id="network-description">正在读取监听状态…</p></div>
     <form id="network-settings-form">

@@ -1,0 +1,7 @@
+{
+  "id": "daily-gold",
+  "title": "天天转金喜",
+  "home": "/daily-gold",
+  "module": "activities.daily_gold.plugin",
+  "temporary": true
+}

@@ -15,7 +15,7 @@ from scrapling import Selector
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from activities.web_checkin.client import ENTRY, ORIGIN, WEB_UA
+from activities.checkin_common.client import ENTRY, ORIGIN, WEB_UA
 
 
 def main():

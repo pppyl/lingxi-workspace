@@ -16,16 +16,11 @@
   if(localHost&&sessionStorage.getItem('desktop-client')==='1')import('/static/desktop-window.js');
   const favicon=document.querySelector('link[rel="icon"]')||document.createElement('link');
   favicon.rel='icon';favicon.href='/favicon.ico';document.head.append(favicon);
-  const paths = {
-    grid:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
-    chat:'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z M7 9h10 M7 13h6',
-    ticket:'M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4V5Z M15 6v2 M15 11v2 M15 16v2',
-    star:'m12 3 2.8 5.7 6.3.9-4.6 4.4 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.6l6.2-.9Z',
-    calendar:'M4 5h16v16H4z M8 3v4 M16 3v4 M4 10h16 M8 15l3 3 5-5',
-    users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
-    menu:'M4 6h16 M4 12h16 M4 18h16',
-  };
-  const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]}"/></svg>`;
+  const symbols={grid:'layout-dashboard',chat:'message-circle',star:'star',recharge:'calendar-clock',
+    checkin:'calendar-check-2',monthly:'ticket-percent',wallet:'wallet-cards',rights:'badge-check',
+    information:'file-search',users:'users-round',settings:'sliders-horizontal',menu:'menu',
+    calendar:'calendar-days',coins:'coins'};
+  const icon=name=>`<svg class="workspace-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><use href="/static/navigation-icons.svg#${symbols[name]}"/></svg>`;
   const pages = [
     ['home','/','工作台'], ['chat','/lingxi','即时对话'],
     ['lingxi-tasks','/lingxi/tasks','定时发送'],
@@ -35,26 +30,33 @@
     ['checkin','/checkin','签到有礼'],
     ['monthly-coupon','/monthly-coupon','每月话费券'],
     ['coupons','/coupons','我的卡券'],
+    ['mobile-rights','/mobile-rights','移动权益'],
+    ['bills','/information','信息查询'],
     ['platforms','/platforms','平台管理'],
   ];
   const groups = [
     {title:'灵犀对话',icon:'chat',keys:['chat','lingxi-tasks']},
   ];
-  const checkinChannelTitle = {'/checkin/web':'网页渠道签到','/checkin/wechat':'微信渠道签到'}[location.pathname];
+  const checkinChannelTitle = {'/checkin/wechat':'微信渠道签到'}[location.pathname];
   const currentGroup = groups.find(group => group.keys.includes(page)) || (checkinChannelTitle ? {title:'签到有礼'} : null);
   const nav = document.createElement('aside'); nav.className = 'workspace-nav'; nav.id = 'workspace-navigation';
-  nav.innerHTML = `<a class="workspace-brand" href="/" aria-label="本地工具台首页"><span class="workspace-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#84beff" d="m16 2 13 7-13 7L3 9Z"/><path fill="#398cff" d="m3 12 11 6v13L3 25Z"/><path fill="#b9daff" d="m18 18 11-6v13l-11 6Z"/></svg></span><span>本地工具台<small>LOCAL WORKSPACE</small></span></a>
+  nav.innerHTML = `<a class="workspace-brand" href="/" aria-label="本地工具台首页"><span class="workspace-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#84beff" d="m16 2 13 7-13 7L3 9Z"/><path fill="#398cff" d="m3 12 11 6v13L3 25Z"/><path fill="#b9daff" d="m18 18 11-6v13l-11 6Z"/></svg></span><span>本地工具台<small>移动账号与任务</small></span></a>
     <div class="workspace-nav-label">工作空间</div><nav aria-label="主导航"><a href="/" class="workspace-nav-item${page === 'home' ? ' active' : ''}"${page === 'home' ? ' aria-current="page"' : ''}>${icon('grid')}<span>工作台</span></a>
-    ${groups.map(group => `<details class="workspace-nav-group${currentGroup === group ? ' contains-current' : ''}" open><summary>${icon(group.icon)}<span>${group.title}</span><svg class="workspace-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary><div class="workspace-subnav">${pages.filter(item => group.keys.includes(item[0])).map(([key,url,label]) => `<a href="${url}" class="workspace-subnav-item${page === key ? ' active' : ''}"${page === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</div></details>${group.keys.includes('chat') ? `<a href="/star-day" class="workspace-nav-item${page === 'star-day' ? ' active' : ''}"${page === 'star-day' ? ' aria-current="page"' : ''}>${icon('star')}<span>星动日</span></a><a href="/recharge/" class="workspace-nav-item${['recharge','recharge-tasks'].includes(page) ? ' active' : ''}"${['recharge','recharge-tasks'].includes(page) ? ' aria-current="page"' : ''}>${icon('ticket')}<span>周三充值日</span></a>` : ''}`).join('')}
-    <a href="/checkin" class="workspace-nav-item${page === 'checkin' ? ' active' : ''}"${page === 'checkin' ? ' aria-current="page"' : ''}>${icon('calendar')}<span>签到有礼</span></a>
-    <a href="/monthly-coupon" class="workspace-nav-item${page === 'monthly-coupon' ? ' active' : ''}"${page === 'monthly-coupon' ? ' aria-current="page"' : ''}>${icon('ticket')}<span>每月话费券</span></a>
-    <a href="/coupons" class="workspace-nav-item${page === 'coupons' ? ' active' : ''}"${page === 'coupons' ? ' aria-current="page"' : ''}>${icon('ticket')}<span>我的卡券</span></a>
+    ${groups.map(group => `<details class="workspace-nav-group${currentGroup === group ? ' contains-current' : ''}"><summary>${icon(group.icon)}<span>${group.title}</span><svg class="workspace-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary><div class="workspace-subnav">${pages.filter(item => group.keys.includes(item[0])).map(([key,url,label]) => `<a href="${url}" class="workspace-subnav-item${page === key ? ' active' : ''}"${page === key ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</div></details>${group.keys.includes('chat') ? `<a href="/star-day" class="workspace-nav-item${page === 'star-day' ? ' active' : ''}"${page === 'star-day' ? ' aria-current="page"' : ''}>${icon('star')}<span>星动日</span></a><a href="/recharge/" class="workspace-nav-item${['recharge','recharge-tasks'].includes(page) ? ' active' : ''}"${['recharge','recharge-tasks'].includes(page) ? ' aria-current="page"' : ''}>${icon('recharge')}<span>周三充值日</span></a>` : ''}`).join('')}
+    <a href="/checkin" class="workspace-nav-item${page === 'checkin' ? ' active' : ''}"${page === 'checkin' ? ' aria-current="page"' : ''}>${icon('checkin')}<span>签到有礼</span></a>
+    <a href="/monthly-coupon" class="workspace-nav-item${page === 'monthly-coupon' ? ' active' : ''}"${page === 'monthly-coupon' ? ' aria-current="page"' : ''}>${icon('monthly')}<span>每月话费券</span></a>
+    <a href="/coupons" class="workspace-nav-item${page === 'coupons' ? ' active' : ''}"${page === 'coupons' ? ' aria-current="page"' : ''}>${icon('wallet')}<span>我的卡券</span></a>
+    <a href="/mobile-rights" class="workspace-nav-item${page === 'mobile-rights' ? ' active' : ''}"${page === 'mobile-rights' ? ' aria-current="page"' : ''}>${icon('rights')}<span>移动权益</span></a>
+    <a href="/information" class="workspace-nav-item${page === 'bills' ? ' active' : ''}"${page === 'bills' ? ' aria-current="page"' : ''}>${icon('information')}<span>信息查询</span></a>
     <div id="workspace-activity-navigation"></div></nav>
     <div class="workspace-nav-divider"></div><button type="button" class="workspace-nav-item${page === 'accounts' ? ' active' : ''}" data-account-window>${icon('users')}<span>账号管理</span></button>
-    <a href="/platforms" class="workspace-nav-item${page === 'platforms' ? ' active' : ''}"${page === 'platforms' ? ' aria-current="page"' : ''}>${icon('grid')}<span>平台管理</span></a>
+    <a href="/platforms" class="workspace-nav-item${page === 'platforms' ? ' active' : ''}"${page === 'platforms' ? ' aria-current="page"' : ''}>${icon('settings')}<span>平台管理</span></a>
     <div class="workspace-nav-footer"><span class="workspace-service-dot"></span><div>本地服务<small id="workspace-host"></small></div><span class="workspace-private">本机</span></div>`;
   nav.querySelector('#workspace-host').textContent = location.host;
   nav.querySelector('.workspace-private').textContent = localHost?'本机':'远程';
+  const closeNavigation=document.createElement('button');closeNavigation.type='button';closeNavigation.className='workspace-nav-close';closeNavigation.setAttribute('aria-label','收起导航');
+  closeNavigation.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12 M18 6 6 18"/></svg>';
+  nav.append(closeNavigation);
   const networkAddresses = document.createElement('div');networkAddresses.id='workspace-addresses';
   nav.querySelector('.workspace-nav-footer').append(networkAddresses);
   const current = pages.find(item => item[0] === page);
@@ -70,6 +72,7 @@
   }
   topbar.querySelector('.workspace-menu').addEventListener('click',toggleNavigation);
   shade.addEventListener('click',toggleNavigation);
+  closeNavigation.addEventListener('click',toggleNavigation);
   nav.addEventListener('click',event => { if(event.target.closest('[data-account-window]') && document.body.classList.contains('workspace-nav-open')) toggleNavigation(); });
   document.addEventListener('keydown',event => { if(event.key === 'Escape' && document.body.classList.contains('workspace-nav-open')) toggleNavigation(); });
   document.body.prepend(nav, topbar, shade);
@@ -88,15 +91,21 @@
   function showSeasonalCampaign(platforms) {
     clearTimeout(seasonalTimer);
     const active = platforms.filter(platform => platform.active);
-    seasonalNavigation.replaceChildren(...active.filter(platform => platform.navigation !== 'checkin').map(platform => {
+    const shown=active.filter(platform=>platform.navigation!=='checkin');
+    const existing=new Map([...nav.querySelectorAll('a[data-platform-id]')].map(link=>[link.dataset.platformId,link]));
+    for(const [id,link] of existing)if(!shown.some(platform=>platform.id===id))link.remove();
+    for(const platform of shown){
+      const present=existing.get(platform.id);
+      if(present){present.querySelector('.workspace-activity-title').textContent=platform.title;continue;}
       const link = document.createElement('a'); link.href = platform.home;
+      link.dataset.platformId=platform.id;
       link.dataset.issueKey = platform.home;
       link.className = 'workspace-nav-item'+(location.pathname === platform.home ? ' active' : '');
       if (location.pathname === platform.home) link.setAttribute('aria-current','page');
-      link.innerHTML = icon('calendar');
-      const label = document.createElement('span'); label.textContent = platform.title; link.append(label);
-      return link;
-    }));
+      link.innerHTML = icon(platform.home==='/daily-gold'?'coins':'calendar');
+      const label = document.createElement('span');label.className='workspace-activity-title';label.textContent = platform.title; link.append(label);
+      seasonalNavigation.parentElement.insertBefore(link,seasonalNavigation);
+    }
     window.dispatchEvent(new CustomEvent('workspace-navigation-changed'));
     const remaining = active.map(platform => Date.parse(platform.end_at)-Date.parse(platform.server_time)).filter(Number.isFinite);
     if (remaining.length) seasonalTimer = setTimeout(refreshSeasonalCampaign, Math.min(Math.max(0, Math.min(...remaining)), 2147483647));

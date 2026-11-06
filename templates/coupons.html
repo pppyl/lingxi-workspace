@@ -5,6 +5,8 @@
   <title>我的卡券 · 本地工具台</title><link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/static/coupons.css">
   <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/static/coupons.js" defer></script>
+  <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
+  <script src="/static/mobile.js?v=mobile-1" defer></script>
 </head>
 <body class="workspace-app" data-workspace="coupons"><main class="portal-shell coupons-shell">
   <section class="coupons-heading"><div><h1>我的卡券</h1><p>查看共享账号的可用卡券、有效期和历史记录。</p></div><button id="coupons-refresh" class="secondary" type="button">刷新卡券</button></section>
@@ -21,7 +23,7 @@
   <section class="coupons-panel" aria-label="卡券列表">
     <div class="coupons-list-heading"><div class="coupons-tabs" role="group" aria-label="卡券状态"><button type="button" class="selected" data-coupons-state="available" aria-pressed="true">可使用</button><button type="button" data-coupons-state="history" aria-pressed="false">卡券历史</button></div><div id="coupons-current-account" class="coupons-current-account">尚未选择账号</div></div>
     <div class="coupons-toolbar"><div class="coupons-filters"><input id="coupons-search" type="search" placeholder="搜索卡券名称" aria-label="搜索已加载卡券" autocomplete="off"><select id="coupons-category" aria-label="筛选卡券类型"><option value="all">全部类型</option><option value="fee">话费券</option><option value="flow">流量券</option><option value="other">其他卡券</option></select><select id="coupons-sort" aria-label="卡券排序" aria-describedby="coupons-order-note"><option value="default">综合排序</option><option value="recent">最近领取</option><option value="oldest">最早领取</option><option value="expiring">即将失效</option></select><span id="coupons-order-note" class="coupons-order-note" hidden>历史按官方顺序展示</span></div><span id="coupons-result-count">选择账号后查看卡券</span></div>
-    <div class="coupons-table-wrap"><table class="coupons-table" aria-label="我的卡券表格"><colgroup><col class="coupons-col-name"><col class="coupons-col-value"><col class="coupons-col-type"><col class="coupons-col-time"><col class="coupons-col-state"><col class="coupons-col-action"></colgroup><thead><tr><th scope="col">卡券名称 / 来源</th><th scope="col">面额</th><th scope="col">类型</th><th scope="col">有效期至 · 北京时间</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody id="coupons-list"><tr><td colspan="6" class="coupons-empty">正在读取共享账号…</td></tr></tbody></table></div>
+    <div id="coupons-list" class="coupons-columns"><p class="coupons-empty">正在读取共享账号…</p></div>
     <div class="coupons-list-footer"><span id="coupons-sync">卡券信息以官方查询结果为准。</span><button id="coupons-more" class="secondary" type="button" hidden>加载更多</button></div>
   </section>
   <p class="coupons-footnote">支持的卡券可兑换话费、流量或用于充值；支付链接和二维码会在订单生成后显示，付款由你手动完成。</p>
@@ -45,8 +47,9 @@
     <button id="coupons-relogin-confirm" class="primary" type="button">登录并继续</button>
   </section>
   <section id="coupons-payment-panel" class="coupons-payment-panel" aria-label="支付宝支付链接" hidden>
-    <h3>支付宝付款</h3><p class="coupons-use-note">打开官方网页收银台，或扫描二维码，核对金额后手动完成付款。</p>
-    <div class="coupons-payment-body"><img id="coupons-payment-qr" class="coupons-payment-qr" alt="支付宝支付二维码" hidden>
+    <h3>支付宝付款</h3><p class="coupons-use-note">进入官方收银台后，请核对金额并手动完成付款。</p>
+    <p id="coupons-payment-scan-tip" class="coupons-payment-scan-tip"><strong>请使用手机浏览器扫码打开</strong><span>不支持支付宝 APP“扫一扫”；也可点击“打开网页付款”。</span></p>
+    <div class="coupons-payment-body"><img id="coupons-payment-qr" class="coupons-payment-qr" alt="网页付款二维码，请使用浏览器扫码，支付宝 APP 无法直接扫描" aria-describedby="coupons-payment-scan-tip" hidden>
       <div class="coupons-payment-details"><a id="coupons-use-payment" class="workspace-primary coupons-payment-link" rel="noopener noreferrer" target="_blank" hidden>打开网页付款</a>
         <label for="coupons-payment-url">支付链接</label><textarea id="coupons-payment-url" readonly rows="3" spellcheck="false" aria-label="支付宝支付链接"></textarea>
         <button id="coupons-copy-payment" class="secondary" type="button">复制支付链接</button>

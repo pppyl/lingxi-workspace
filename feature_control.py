@@ -14,6 +14,8 @@ BUILTINS = (
     ('checkin', '签到有礼', '/checkin', ('/checkin', '/api/checkin')),
     ('monthly-coupon', '每月话费券', '/monthly-coupon', ('/monthly-coupon', '/api/monthly-coupon')),
     ('coupons', '我的卡券', '/coupons', ('/coupons', '/api/coupons', '/coupon-verification')),
+    ('mobile-rights', '移动权益', '/mobile-rights', ('/mobile-rights', '/api/mobile-rights')),
+    ('bills', '信息查询', '/information', ('/information', '/bills', '/api/bills', '/api/usage', '/api/services')),
 )
 
 
@@ -24,6 +26,10 @@ class FeatureControl:
         if saved is not None and (not isinstance(saved, dict) or any(type(value) is not bool for value in saved.values())):
             raise LoginStorageError('功能开关配置无效，已保留原数据库。')
         self.settings = saved or {}
+        order = storage.load_activity_data('feature-order') if storage else None
+        if order is not None and (not isinstance(order,list) or any(not isinstance(key,str) for key in order) or len(set(order))!=len(order)):
+            raise LoginStorageError('功能排序配置无效，已保留原数据库。')
+        self.order = order or []
         self.entries, self.generations = {}, {}
         for key, title, home, paths in BUILTINS:
             self.register(key, title, home, paths)
@@ -32,7 +38,20 @@ class FeatureControl:
 
         @app.get('/api/features')
         def features():
-            return jsonify(features=self.public())
+            return jsonify(features=self.public(),default_order=self.default_order())
+
+        @app.post('/api/features/order')
+        def save_order():
+            payload=request.get_json(silent=True)
+            ids=payload.get('feature_ids') if isinstance(payload,dict) else None
+            if not isinstance(ids,list) or any(not isinstance(key,str) for key in ids) or len(set(ids))!=len(ids):
+                return jsonify(error='请提供不重复的功能顺序。'),400
+            with self.lock:
+                if set(ids)!=set(self.default_order()):
+                    return jsonify(error='功能列表已变化，请刷新后重新排序。'),409
+                if self.storage:self.storage.save_activity_data('feature-order',ids)
+                self.order=list(ids)
+            return jsonify(features=self.public(),default_order=self.default_order(),message='功能顺序已保存，左侧导航已同步。')
 
         @app.post('/api/features/<feature_id>')
         def switch(feature_id):
@@ -63,8 +82,19 @@ class FeatureControl:
                 rows.append(dict(id=key, title=entry['title'], home=entry['home'],
                     enabled=self.enabled(key), state=state, temporary=entry['temporary'],
                     active=self.enabled(key) and state == 'running', can_delete=platform is not None,
+                    navigation=platform.get('navigation','main') if platform else 'main',
                     end_at=platform['metadata'].get('end_at') if platform else None))
-            return rows
+            return self.order_rows(rows)
+
+    def default_order(self):
+        with self.lock:
+            return [key for key,entry in self.entries.items()
+                    if entry['platform'] is None or entry['platform']['state']!='deleted']
+
+    def order_rows(self, rows):
+        with self.lock:
+            positions={key:index for index,key in enumerate(self.order)}
+        return sorted(rows,key=lambda row:positions.get(row['id'],len(positions)))
 
     def set_enabled(self, feature_id, enabled):
         with self.lock:

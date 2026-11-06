@@ -16,6 +16,7 @@
   let exchangeRiskToken = '', riskSdk = null;
   let successToastTimer = null;
   const availableCounts = new Map();
+  let reminderCounts = {};
   let countsGeneration = 0;
   let refreshPending = false;
   let pendingExpiryTimer = null;
@@ -49,7 +50,7 @@
     return result;
   }
   function feedback(message){$('coupons-feedback').textContent=message;$('coupons-feedback').hidden=!message;}
-  function emptyRow(message){const row=node('tr'),cell=node('td','coupons-empty',message);cell.colSpan=6;row.append(cell);return row;}
+  function emptyRow(message){const row=node('tr'),cell=node('td','coupons-empty',message);cell.colSpan=5;row.append(cell);return row;}
 
   async function loadNotices(){
     if(!queryFailed)return;
@@ -115,9 +116,19 @@
       const count=availableCounts.get(account.id),ready=account.status==='active'&&count?.state==='ready'&&count.revision===account.credential_revision;
       const countBadge=node('span','coupons-account-coupons '+(ready?(count.value>0?'has-coupons':'no-coupons'):'unknown'),ready?`可用 ${count.value} 张`:account.status!=='active'?'—':count?.state==='failed'?'未获取':'查券中');
       countBadge.title=ready?'当前可使用的卡券数量':count?.error||'正在查询当前账号的可用卡券数量';
-      label.append(name,countBadge,status);button.append(label,node('small','',account.phone_masked));
+      const reminder=reminderCounts[account.id],amount=reminder?.count||0;
+      const bubble=node('span','coupons-account-reminder',String(amount));bubble.hidden=amount===0;
+      bubble.title=`${amount} 张可用优惠话费券：话费兑换券、最优充值折扣低于9.1折的券`+(reminder?.unpriced?`；另有 ${reminder.unpriced} 张充值券规则待核对`:'');
+      bubble.setAttribute('aria-label',bubble.title);
+      label.append(name,bubble,countBadge,status);button.append(label,node('small','',account.phone_masked));
       button.addEventListener('click',()=>{if(account.id===loginId)return loadCards();closeUse(true);loginId=account.id;renderAccounts();return loadCards();});return button;
     }));
+  }
+
+  function updateReminder(accountId, reminder){
+    if(!reminder)return;
+    reminderCounts[accountId]=reminder;
+    window.dispatchEvent(new CustomEvent('coupon-reminders-changed'));
   }
 
   async function loadAvailableCounts(force=false){
@@ -136,6 +147,7 @@
           if(!response.ok)throw new Error(result.error||'卡券数量未获取，请刷新重试。');
           if(generation!==countsGeneration||availableCounts.get(account.id)!==record)continue;
           record.state='ready';record.value=result.items.filter(item=>item.status==='available').length;
+          updateReminder(account.id,result.reminder);
         }catch(error){
           if(generation!==countsGeneration||availableCounts.get(account.id)!==record)continue;
           record.state='failed';record.error=error.message;
@@ -160,21 +172,38 @@
     const shown=items.filter(item=>(category==='all'||item.category===category)&&(!search||item.name.toLocaleLowerCase().includes(search)));
     const filtered=search||category!=='all';
     $('coupons-result-count').textContent=items.length?`${filtered?`当前已加载中筛选出 ${shown.length} 张 · `:''}已加载 ${items.length} 张${total===null?'':` / 共 ${total} 张`}`:loading?'正在查询…':queryFailed?'查询未完成':total===0?'共 0 张':'选择账号后查看卡券';
-    const rows=shown.map(item=>{
+    const groupedRows={fee:[],flow:[],other:[]};
+    for(const item of shown){
       const row=node('tr'),name=node('td'),title=node('strong','coupons-name',item.name);name.append(title,node('small','coupons-source',item.source||'来源未提供'));
-      const value=node('td','coupons-value',amountText(item)),categoryCell=node('td'),badge=node('span','coupons-category '+item.category,categories[item.category]||categories.other);categoryCell.append(badge);
+      const value=node('td','coupons-value',amountText(item));
       const status=node('td'),statusBadge=node('span','coupons-status '+(item.status==='available'||(!item.status&&state==='available')?'available':'history'),statusText(item));status.append(statusBadge);
       const action=node('td'),actions=node('div','coupons-row-actions'),details=node('button','quiet','详情');details.type='button';details.setAttribute('aria-label',`查看${item.name}详情`);details.addEventListener('click',()=>openDetails(item));
       const pending=pendingOrders.find(order=>order.coupon_id===item.id);
       if(pending||useNames[item.use_kind]){const label=pending?'继续支付':useNames[item.use_kind];const use=node('button','secondary coupons-use-button',label);use.type='button';use.setAttribute('aria-label',`${label}：${item.name}`);use.addEventListener('click',()=>pending?openPayment(pending):openUse(item));actions.append(use);}
       actions.append(details);action.append(actions);
-      row.append(name,value,categoryCell,node('td','coupons-time',dateText(item.expires_at)),status,action);return row;
-    });
-    if(!rows.length){
-      const message=!selected?(refreshing?'正在读取共享账号…':'共享账号池为空，请从左侧“账号管理”登录。'):selected.status!=='active'?'此账号暂不可用，请从左侧“账号管理”恢复登录。':loading?'正在查询该账号卡券…':queryFailed?'本次查询未完成，点击“刷新卡券”重试。':filtered?'已加载的卡券中没有匹配结果。':state==='available'?'此账号暂无可用卡券。':'此账号暂无卡券历史。';
-      rows.push(emptyRow(message));
+      row.append(name,value,node('td','coupons-time',dateText(item.expires_at)),status,action);
+      groupedRows[item.category in categories?item.category:'other'].push(row);
     }
-    $('coupons-list').replaceChildren(...rows);
+    const columns=[];
+    if(shown.length){
+      for(const [key,label] of Object.entries(categories)){
+        if(category!=='all'&&category!==key||key==='other'&&!groupedRows.other.length)continue;
+        const group=node('section','coupons-group coupons-group-'+key),heading=node('h3','coupons-group-heading',label);
+        group.setAttribute('aria-label',label);
+        heading.append(node('span','coupons-group-count',`${groupedRows[key].length} 张`));
+        const wrap=node('div','coupons-table-wrap'),table=node('table','coupons-table'),cols=node('colgroup'),head=node('thead'),header=node('tr'),body=node('tbody');
+        table.setAttribute('aria-label',label+'列表');
+        for(const field of ['name','value','time','state','action'])cols.append(node('col','coupons-col-'+field));
+        for(const title of ['卡券名称 / 来源','面额','有效期至 · 北京时间','状态','操作']){const th=node('th','',title);th.scope='col';header.append(th);}
+        head.append(header);body.append(...(groupedRows[key].length?groupedRows[key]:[emptyRow(filtered?'没有匹配的'+label:'暂无'+label)]));
+        table.append(cols,head,body);wrap.append(table);group.append(heading,wrap);columns.push(group);
+      }
+    }else{
+      const message=!selected?(refreshing?'正在读取共享账号…':'共享账号池为空，请从左侧“账号管理”登录。'):selected.status!=='active'?'此账号暂不可用，请从左侧“账号管理”恢复登录。':loading?'正在查询该账号卡券…':queryFailed?'本次查询未完成，点击“刷新卡券”重试。':filtered?'已加载的卡券中没有匹配结果。':state==='available'?'此账号暂无可用卡券。':'此账号暂无卡券历史。';
+      columns.push(node('p','coupons-empty',message));
+    }
+    $('coupons-list').classList.toggle('coupons-columns-filtered',category!=='all');
+    $('coupons-list').replaceChildren(...columns);
     $('coupons-pending').hidden=!pendingOrders.length;
     $('coupons-pending-list').replaceChildren(...pendingOrders.map(order=>{
       const line=node('div','coupons-pending-order'),label=node('div');
@@ -199,6 +228,7 @@
       const query=new URLSearchParams({login_id:loginId,state,page:String(more?page+1:1),sort:$('coupons-sort').value});
       const result=await api('/api/coupons?'+query);
       if(version!==requestVersion)return;
+      updateReminder(selected.id,result.reminder);
       items=more?[...items,...result.items]:result.items;setPendingOrders(result.pending_orders||[]);page=result.page;total=result.total;hasMore=result.has_more;queryFailed=false;
       $('coupons-notices').hidden=true;clearTimeout(noticesTimer);noticesPending=false;
       if(state==='available'){
@@ -219,7 +249,7 @@
   async function refresh(forceCounts=false){
     if(refreshing){refreshPending=true;return;}refreshing=true;render();
     try{
-      const result=await api('/api/coupons/accounts');accounts=result.accounts;
+      const result=await api('/api/coupons/accounts');accounts=result.accounts;reminderCounts=result.reminders?.accounts||{};
       if(!accounts.some(account=>account.id===loginId)){closeUse(true);loginId=accounts.find(account=>account.status==='active')?.id||accounts[0]?.id||'';}
       if(accounts.find(account=>account.id===loginId)?.status!=='active'&&!relogin?.required)closeUse(true);
       renderAccounts();loadAvailableCounts(forceCounts);await loadCards();

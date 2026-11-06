@@ -2,3 +2,23 @@
 .network-settings{margin-bottom:24px}.network-settings form{padding:0 26px 22px}.network-switches{display:grid;grid-template-columns:1fr 1fr;gap:16px}.network-switches label{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 18px;border:1px solid #e3eaf4;border-radius:8px}.network-switches strong{display:block;font-size:13px;color:#29486b}.network-switches small{display:block;margin-top:5px;font-size:11px;color:#90a2bb}.network-switches input{width:18px;height:18px;padding:0;margin:0;flex-shrink:0}.network-settings-actions{display:flex;gap:12px}.network-note{font-size:12px;color:#8a9eb8;line-height:1.9;margin:15px 0 18px}.network-address-list{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;padding:0 26px 24px}.network-address-list .network-family-label{font-size:12px;color:#708aaa}.network-address-list .network-address{font-size:12px;color:#1764ff;margin-top:5px}@media(max-width:800px){.network-switches,.network-address-list{grid-template-columns:1fr}.network-settings form{padding:0 20px 20px}.network-address-list{padding:0 20px 20px}}
 .network-custom-toggle{display:flex;align-items:flex-start;gap:11px;margin-top:20px;cursor:pointer}.network-custom-toggle input,.network-address-choice input{width:17px;height:17px;margin:3px 0 0;padding:0;flex-shrink:0}.network-custom-toggle strong{display:block;font-size:13px;color:#29486b}.network-custom-toggle small{display:block;margin-top:4px;font-size:11px;color:#90a2bb;line-height:1.8}.network-address-choice{display:flex;align-items:flex-start;gap:10px;margin:12px 0;cursor:pointer}.network-address-choice>span{min-width:0}.network-address-choice .network-address{margin-top:0}.network-address-choice small{display:block;margin-top:3px;font-size:10px;color:#93a3b9}.network-address-choice .network-listening{color:#109474}.network-address-warning{color:#bb8339;background:#fff8e9;padding:10px 12px;border-radius:6px}
 .platforms-badge.disabled{color:#8b9bb0;background:#f0f3f7}.platforms-feature-switch{display:inline-flex;align-items:center;position:relative;cursor:pointer}.platforms-feature-switch input{position:absolute;width:100%;height:100%;opacity:0;margin:0;cursor:pointer;z-index:1}.platforms-switch-track{display:block;width:38px;height:22px;border-radius:12px;background:#c7d2e2;transition:background .15s}.platforms-switch-track::after{content:"";display:block;width:16px;height:16px;margin:3px;border-radius:50%;background:white;box-shadow:0 1px 3px #16304e22;transition:transform .15s}.platforms-feature-switch input:checked+.platforms-switch-track{background:#1764ff}.platforms-feature-switch input:checked+.platforms-switch-track::after{transform:translateX(16px)}.platforms-feature-switch input:focus-visible+.platforms-switch-track{outline:3px solid #b7d0ff;outline-offset:3px}.platforms-feature-switch input:disabled{cursor:wait}.platforms-feature-switch:has(input:disabled){opacity:.5}#feature-settings{margin-bottom:22px;scroll-margin-top:88px}
+
+.platforms-order-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px 16px}
+.platforms-order-toolbar p{margin:0;color:#71839a;font-size:12px;line-height:20px}
+.platforms-order-toolbar>button{flex-shrink:0}
+.platforms-order-controls{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.platforms-order-number{min-width:24px;text-align:center;font-variant-numeric:tabular-nums;color:#71839a;font-size:12px}
+.workspace-app .platforms-order-controls button{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:32px;padding:0;border:1px solid #e2e9f2;border-radius:4px;background:#fff;color:#657d9b;box-shadow:none}
+.workspace-app .platforms-order-controls button:hover:enabled{background:#f0f5fd;color:#2367c4;border-color:#b8cde9}
+.workspace-app .platforms-order-controls button:disabled{opacity:.3;cursor:default}
+.platforms-order-controls svg{display:block;width:16px;height:16px;pointer-events:none}
+.workspace-app .platforms-order-controls .platforms-order-handle{cursor:grab;border-color:transparent;background:transparent}
+.workspace-app .platforms-order-controls .platforms-order-handle:active{cursor:grabbing}
+.platforms-dragging{opacity:.45}
+.platforms-table tr.platforms-drop-target>td{background:#edf4ff;border-bottom-color:#72a2ed}
+@media(max-width:900px){
+ .platforms-order-toolbar{padding:0 14px 14px;align-items:flex-start;flex-wrap:wrap;gap:8px}
+ .platforms-order-toolbar>button{margin-left:auto}
+ .workspace-app .platforms-order-controls button{width:40px;min-height:40px}
+ .mobile-record-table>tbody>tr>.platforms-order-cell{grid-column:1/-1}
+}

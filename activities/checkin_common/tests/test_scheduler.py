@@ -4,8 +4,8 @@ import json
 import unittest
 
 from recharge.cmcc import SHANGHAI
-from activities.web_checkin.client import WebCheckinError
-from activities.web_checkin.scheduler import WebCheckinScheduler
+from activities.checkin_common.client import WebCheckinError
+from activities.checkin_common.scheduler import WebCheckinScheduler
 
 
 class Storage:

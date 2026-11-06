@@ -6,8 +6,42 @@ import * as M from './task-model.js';
   const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
   const time=v=>v?fmt.format(new Date(v)):'—';
   const node=(tag,cls='',text='')=>{const e=document.createElement(tag);e.className=cls;e.textContent=text;return e;};
-  let data={accounts:[],logins:[],jobs:{}},selectedLogin='',tab=new URLSearchParams(location.search).get('tab')==='tasks'?'tasks':'activity',filter='all',selection=new Set(),shown=[],loaded=false,loading=false,mutation=false,stopping=[],queryHandled=false;
+  let data={accounts:[],logins:[],jobs:{}},selectedLogin='',tab=['tasks','checkin'].includes(new URLSearchParams(location.search).get('tab'))?new URLSearchParams(location.search).get('tab'):'activity',filter='all',selection=new Set(),shown=[],loaded=false,loading=false,mutation=false,stopping=[],queryHandled=false;
   const busy=new Set(),prizes=new Map();
+  const signBusy=new Set();
+  function renderCheckin(){
+    const state=data.checkin||{settings:{enabled:true,time:'00:01'},records:{}},day=new Date(data.server_time||Date.now()).toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'});
+    $('wed-checkin-plan').textContent=state.settings.enabled?`每日 ${state.settings.time} 起自动打卡 · 全部有效账号`:'自动打卡已关闭';
+    const rows=data.logins.filter(login=>!selectedLogin||login.id===selectedLogin).map(login=>{
+      const record=state.records[login.id]||{},p=record.progress||{},current=p.date===day,month=p.month===day.slice(0,7),working=signBusy.has(login.id)||(state.active||[]).includes(login.id);
+      const tr=node('tr'),progress=node('td'),task=node('td'),prize=node('td'),result=node('td','wed-result'),actions=node('td');
+      progress.append(badge(working?'处理中':current?p.status:'今日待查询',record.state==='failed'?'orange':p.today_signed&&current?'green':'blue'),node('small','',`${month?p.streak||0:0} / 7 天`));
+      task.append(node('span','',month?p.task||'—':'待查询'));if(p.broken&&month)task.append(node('small','','已断签，重新从第1天累计'));
+      prize.append(badge(month&&p.received?'本月已领取':month&&p.action==='claim'?'待领取':month&&p.rd_status===5?'本月已抢光':'待满7天',month&&p.received?'green':''));
+      if(p.prize&&month)prize.append(node('small','',[p.prize.shortName,p.prize.name,p.prize.subTitle].filter(Boolean).join(' · ')));
+      result.append(node('span','',record.message||'到点后自动核对当日进度'),node('small','',time(p.queried_at)));
+      if(record.state==='failed')result.append(node('small','',record.blocked?'当天自动检查已停止，处理后可主动查询':record.attempts>=5?'今日失败已达5次，明日再检查':`失败 ${record.attempts}/5 次，5分钟后再核对`));
+      const wrap=node('div','wed-row-actions'),query=button('查询进度',()=>runCheckin(login.id,false),'secondary');query.disabled=working;wrap.append(query);
+      if(!current||!['done','manual','closed'].includes(p.action)){
+        const run=button(p.action==='claim'?'领取8折券':'立即打卡',()=>runCheckin(login.id,true),'secondary');run.disabled=working||Boolean(record.pending);wrap.append(run);
+      }
+      if(current&&p.action==='manual')wrap.append(node('span','wed-note','请在 APP 完成任务'));
+      actions.append(wrap);tr.append(accountCell(login),progress,task,prize,result,actions);return tr;
+    });
+    if(rows.length)$('wed-checkin-rows').replaceChildren(...rows);else empty('wed-checkin-rows',6,'登录共享账号后自动加入每日连续打卡。');
+  }
+  async function runCheckin(id,submit){
+    if(signBusy.has(id))return;signBusy.add(id);renderCheckin();
+    try{await api('/api/checkin/run',{login_id:id,submit});feedback();}
+    catch(error){feedback(error.message);}
+    finally{signBusy.delete(id);await refresh();renderCheckin();}
+  }
+  async function queryCheckins(){
+    const queue=data.logins.filter(a=>(!selectedLogin||a.id===selectedLogin)&&a.status==='active').map(a=>a.id);
+    $('wed-checkin-refresh').disabled=true;
+    try{await Promise.all(Array.from({length:Math.min(3,queue.length)},async()=>{while(queue.length)await runCheckin(queue.shift(),false);}));}
+    finally{$('wed-checkin-refresh').disabled=false;}
+  }
   const prizeLabels={UNUSED:'可使用',USED:'已使用',EXPIRED:'已过期',TOSEND:'可赠送',SENDED:'已赠送',TOLOOK:'待查看',LOCKED:'待解锁',3:'发放中',1:'可使用'};
   async function api(path,body){const response=await fetch(base+path,{cache:'no-store',...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})});const value=await response.json();if(!response.ok){const error=new Error(value.error||'操作未完成');error.code=value.code;throw error;}return value;}
   function feedback(message=''){$('wed-feedback').textContent=message;$('wed-feedback').hidden=!message;}
@@ -66,9 +100,9 @@ import * as M from './task-model.js';
       const actions=node('td'),wrap=node('div','wed-row-actions');wrap.append(button('记录',()=>details(r.id),'secondary'));if(stoppable(r)){const stop=button('停止本周',()=>openStop([r.id]));stop.disabled=mutation;wrap.append(stop);}if(login.status!=='active'){const relogin=button('重新登录',()=>{});relogin.dataset.accountWindow='';relogin.dataset.accountRelogin=login.id;wrap.append(relogin);}actions.append(wrap);tr.append(select,accountCell(login),status,plan,progress,result,actions);return tr;});
     if(elements.length)$('wed-task-rows').replaceChildren(...elements);else empty('wed-task-rows',7,data.logins.length?'当前筛选下没有任务。有效账号会自动加入，无需新建。':'登录共享账号后，将自动生成周三领取任务。');updateSelection();
   }
-  function render(){renderAccounts();renderActivity();renderTasks();for(const name of ['activity','tasks']){$('wed-tab-'+name).setAttribute('aria-selected',String(tab===name));$('wed-'+name).hidden=tab!==name;}$('wed-warning').textContent=data.warning||'';$('wed-warning').hidden=!data.warning;$('wed-sync').textContent='北京时间 · 最近同步 '+time(data.server_time);}
-  async function refresh(){if(loading)return;loading=true;try{data=await api('/api/accounts');loaded=true;if(selectedLogin&&!data.logins.some(a=>a.id===selectedLogin))selectedLogin='';render();if(!queryHandled){queryHandled=true;const p=new URLSearchParams(location.search),id=p.get('detail')||p.get('edit');if(id&&data.jobs[id])details(id);}}catch(error){feedback(error.message);if(!loaded)empty('wed-status-rows',5,'暂时无法读取，请点击刷新重试。');}finally{loading=false;}}
-  function choose(id,force=false){selectedLogin=id;render();if(id&&data.logins.find(a=>a.id===id)?.status==='active'&&(!prizes.has(id)||force))queryAccount(id,false);}
+  function render(){renderAccounts();renderActivity();renderTasks();renderCheckin();for(const name of ['activity','checkin','tasks']){$('wed-tab-'+name).setAttribute('aria-selected',String(tab===name));$('wed-'+name).hidden=tab!==name;}$('wed-warning').textContent=data.warning||'';$('wed-warning').hidden=!data.warning;$('wed-sync').textContent='北京时间 · 最近同步 '+time(data.server_time);}
+  async function refresh(){if(loading)return;loading=true;try{data=await api('/api/accounts');loaded=true;if(selectedLogin&&!data.logins.some(a=>a.id===selectedLogin))selectedLogin='';render();if(!queryHandled){queryHandled=true;const p=new URLSearchParams(location.search),id=p.get('detail')||p.get('edit');if(id&&data.jobs[id])details(id);if(tab==='checkin')void queryCheckins();}}catch(error){feedback(error.message);if(!loaded)empty('wed-status-rows',5,'暂时无法读取，请点击刷新重试。');}finally{loading=false;}}
+  function choose(id,force=false){selectedLogin=id;render();if(tab==='checkin'){if(id)void runCheckin(id,false);return;}if(id&&data.logins.find(a=>a.id===id)?.status==='active'&&(!prizes.has(id)||force))queryAccount(id,false);}
   async function queryAccount(loginId,withStatus){
     if(busy.has(loginId))return;busy.add(loginId);if(!withStatus){prizes.set(loginId,{message:'正在查询官方奖品…'});renderPrizes();}renderActivity();
     try{let account=linked(loginId),id=account?.id;if(!account?.authenticated){const attached=await api('/api/login/attach',{login_id:loginId,...(id?{account_id:id}:{})});id=attached.account_id;}
@@ -78,10 +112,13 @@ import * as M from './task-model.js';
   function details(id){const job=data.jobs[id],account=data.accounts.find(a=>a.id===id);$('wed-detail-title').textContent=(account?.name||'账号')+' · 领取记录';$('wed-detail-summary').textContent=`每周三 07:55 准备、08:00 领取 · 已尝试 ${job.attempts||0}/${job.max_attempts} 轮 · 实际提交 ${job.submissions||0} 次`;
     const records=[...(job.history||[])].reverse();$('wed-detail-history').replaceChildren(...(records.length?records.map(e=>{const item=node('article','wed-history');item.append(node('time','',time(e.time)),node('p','',e.message));return item;}):[node('p','wed-note',job.message||'尚未开始执行。')]));$('wed-detail').showModal();}
   function openStop(ids){stopping=ids;$('wed-stop-description').textContent=`停止所选 ${ids.length} 个账号本周的领取任务？`;$('wed-stop-error').hidden=true;$('wed-stop').showModal();}
-  $('wed-refresh').addEventListener('click',refresh);for(const name of ['activity','tasks'])$('wed-tab-'+name).addEventListener('click',()=>{tab=name;const url=new URL(location.href);name==='tasks'?url.searchParams.set('tab','tasks'):url.searchParams.delete('tab');history.replaceState(null,'',url);render();});
+  $('wed-refresh').addEventListener('click',()=>tab==='checkin'?queryCheckins():refresh());for(const name of ['activity','checkin','tasks'])$('wed-tab-'+name).addEventListener('click',()=>{tab=name;const url=new URL(location.href);name!=='activity'?url.searchParams.set('tab',name):url.searchParams.delete('tab');history.replaceState(null,'',url);render();if(name==='checkin')void queryCheckins();});
   document.querySelectorAll('[data-wed-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.wedFilter;selection.clear();renderTasks();}));$('wed-task-search').addEventListener('input',()=>{selection.clear();renderTasks();});
   $('wed-select-all').addEventListener('change',()=>{for(const r of shown.filter(stoppable))$('wed-select-all').checked?selection.add(r.id):selection.delete(r.id);renderTasks();});$('wed-stop-selected').addEventListener('click',()=>openStop([...selection]));
   $('wed-stop-form').addEventListener('submit',async e=>{e.preventDefault();if(mutation)return;mutation=true;$('wed-stop-confirm').disabled=true;try{await api('/api/schedules/cancel',{account_ids:stopping});selection.clear();$('wed-stop').close();feedback('已停止本周的后续请求，下周三会自动恢复。');await refresh();}catch(error){$('wed-stop-error').textContent=error.message;$('wed-stop-error').hidden=false;}finally{mutation=false;$('wed-stop-confirm').disabled=false;renderTasks();}});
   document.querySelectorAll('[data-wed-close]').forEach(b=>b.addEventListener('click',()=>{if(!mutation)b.closest('dialog').close();}));$('wed-stop').addEventListener('cancel',e=>{if(mutation)e.preventDefault();});
+  $('wed-checkin-refresh').addEventListener('click',queryCheckins);
+  $('wed-checkin-settings').addEventListener('click',()=>{const settings=data.checkin.settings;$('wed-checkin-enabled').checked=settings.enabled;$('wed-checkin-time').value=settings.time;$('wed-checkin-config-error').hidden=true;$('wed-checkin-config').showModal();});
+  $('wed-checkin-config-form').addEventListener('submit',async e=>{e.preventDefault();if(mutation)return;mutation=true;try{await api('/api/checkin/settings',{enabled:$('wed-checkin-enabled').checked,time:$('wed-checkin-time').value});$('wed-checkin-config').close();await refresh();}catch(error){$('wed-checkin-config-error').textContent=error.message;$('wed-checkin-config-error').hidden=false;}finally{mutation=false;}});
   window.addEventListener('accounts-changed',refresh);window.addEventListener('focus',refresh);refresh();setInterval(()=>{if(!document.hidden&&!mutation)refresh();},4000);
 })();

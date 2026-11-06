@@ -4,6 +4,7 @@ from datetime import datetime
 
 from flask import jsonify
 from recharge.cmcc import SHANGHAI
+from coupon_reminders import reminder_summary
 
 FAILED = {'failed', 'partial', 'interrupted', 'missed', 'exhausted', 'auth_failed',
           'login_required', 'rate_limited', 'ineligible', 'unknown_result', 'uncertain'}
@@ -18,6 +19,8 @@ def failure_counts(accounts, snapshots, now):
     counts['/lingxi/tasks'] = sum(job['login_id'] in known and job['state'] in FAILED
         for job in snapshots.get('lingxi', {}).values())
     counts['/recharge/'] = sum(job['state'] in FAILED for job in snapshots.get('recharge', {}).values())
+    counts['/recharge/'] += sum(login_id in known and record.get('state')=='failed'
+        for login_id,record in snapshots.get('wed_checkin',{}).get('records',{}).items())
 
     checkin = snapshots.get('checkin', {})
     for task in checkin.get('tasks', {}).values():
@@ -68,12 +71,17 @@ def register_navigation_status(app, accounts, sources, platforms):
             with owner.lock:
                 snapshots[key] = deepcopy(getattr(owner, attribute))
         now = datetime.now(SHANGHAI)
-        counts = failure_counts(accounts(), snapshots, now)
+        known_accounts = accounts()
+        counts = failure_counts(known_accounts, snapshots, now)
+        reminders = reminder_summary(snapshots.get('coupon_reminders', {}),
+            [account['id'] for account in known_accounts], snapshots.get('coupons', {}), now)
         features = app.extensions.get('feature_control')
         for path, feature_id in {'/lingxi/tasks':'lingxi', '/recharge/':'recharge', '/checkin':'checkin',
                 '/star-day':'star-day', '/monthly-coupon':'monthly-coupon', '/coupons':'coupons'}.items():
             if features is not None and not features.enabled(feature_id):
                 counts[path] = 0
+                if feature_id == 'coupons':
+                    reminders = {'accounts': {}, 'total': 0}
         with platforms.lock:
             for entry in platforms.platforms.values():
                 if entry['stopped'] or features is not None and not features.enabled(entry['id']) or not entry['controller'].metadata().get('active'):
@@ -84,4 +92,4 @@ def register_navigation_status(app, accounts, sources, platforms):
                     counts[entry['home']] = count
                     if entry['navigation'] == 'checkin':
                         counts['/checkin'] += count
-        return jsonify(counts=counts, checked_at=now.isoformat())
+        return jsonify(counts=counts, coupon_reminders=reminders, checked_at=now.isoformat())

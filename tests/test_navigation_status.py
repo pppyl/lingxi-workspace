@@ -104,6 +104,25 @@ class NavigationCountTests(unittest.TestCase):
         remote={'base_url':'http://192.168.31.176:5500','environ_overrides':{'REMOTE_ADDR':'192.168.31.90'}}
         self.assertEqual(client.get('/api/navigation/issues',**remote).status_code,428)
 
+    def test_coupon_navigation_total_reads_saved_rules_and_excludes_occupied_or_removed_coupons(self):
+        app=Flask('coupon-counts')
+        records={'a':{'checked_at':'2026-11-06T12:00:00+08:00','items':{
+            'good':{'qualifies':True,'expires_at':'2099-01-01T00:00:00+08:00'},
+            'occupied':{'qualifies':True,'expires_at':''},
+            'costly':{'qualifies':False,'expires_at':''},
+            'unknown':{'qualifies':None,'expires_at':''}}},
+            'deleted':{'checked_at':'old','items':{'old':{'qualifies':True,'expires_at':''}}}}
+        coupons={'one':{'login_id':'a','coupon_id':'occupied','state':'payment_required'}}
+        owner=SimpleNamespace(lock=RLock(),reminders=records,coupons=coupons)
+        platforms=SimpleNamespace(lock=RLock(),platforms={})
+        register_navigation_status(app,lambda:ACCOUNTS,{'coupon_reminders':(owner,'reminders'),'coupons':(owner,'coupons')},platforms)
+        response=app.test_client().get('/api/navigation/issues')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json['coupon_reminders']['total'],1)
+        self.assertEqual(response.json['coupon_reminders']['accounts']['a']['unpriced'],1)
+        self.assertEqual(response.json['counts']['/coupons'],0)
+        self.assertNotIn('occupied',response.get_data(as_text=True))
+
 
 if __name__ == '__main__':
     unittest.main()

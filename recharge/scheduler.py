@@ -49,6 +49,7 @@ class ClaimScheduler:
         self.shared_accounts = None
         self.ensure_shared_account = None
         self.prepare_account = None
+        self.daily = None
         self._load()
 
     def configure_automatic(self, accounts, ensure_account, prepare_account=None):
@@ -169,7 +170,7 @@ class ClaimScheduler:
 
     def busy(self, account_id):
         with self.lock:
-            return account_id in self.workers
+            return account_id in self.workers or self.daily is not None and self.manager.get(account_id).pool_login_id in self.daily.active
 
     def schedule(self, account_ids, data, *, immediate=False):
         if not isinstance(account_ids, list) or not account_ids or len(set(account_ids)) != len(account_ids):
@@ -216,11 +217,14 @@ class ClaimScheduler:
         self.wake.set()
 
     def remove(self, account_id):
+        if self.daily is not None and self.manager.get(account_id).pool_login_id in self.daily.active:
+            raise ActivityError('请等待当前打卡完成后再移除账号。','JOB_RUNNING',409)
         self.cancel([account_id])
         with self.lock:
             if account_id in self.workers:
                 raise ActivityError('请等待账号任务停止后再移除', 'JOB_RUNNING', 409)
             self.jobs.pop(account_id, None)
+            if self.daily is not None:self.daily.forget(self.manager.get(account_id).pool_login_id)
             self._save()
 
     def _update(self, account_id, *, message=None, log=False, **fields):
@@ -259,6 +263,7 @@ class ClaimScheduler:
                 self.cancellations[account_id] = event
                 self.workers[account_id] = worker
                 worker.start()
+        if self.daily is not None:self.daily.tick()
 
     def _loop(self):
         while not self.shutdown_event.is_set():

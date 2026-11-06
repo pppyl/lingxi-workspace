@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parent
 ENTRY = 'https://wx.10086.cn/hlwyxhdhub/act-wedrecharge/1024101716'
 BASE = 'https://wx.10086.cn/hlwyxhdhub/api/wedrecharge/'
 SHANGHAI = timezone(timedelta(hours=8))
-ENDPOINTS = {'_pub/rec_login', 'queryActivityInfo', 'queryDrawPrizeInfo', 'getPrizeList', 'drawPrize'}
+ENDPOINTS = {'_pub/rec_login', 'queryActivityInfo', 'queryDrawPrizeInfo', 'getPrizeList', 'drawPrize',
+             'querySignActInfo', 'signFinishTask', 'receiveSign', 'signList'}
 APP_UA = ('Mozilla/5.0 (Linux; Android 16; 2210132C; wv) AppleWebKit/537.36 '
           '(KHTML, like Gecko) Version/4.0 Chrome/145.0.0.0 Mobile Safari/537.36 leadeon/12.5.6')
 RD_STATES = {0: '已参与', 1: '可参与', 2: '未中奖', 3: '发放中', 4: '去使用',
@@ -462,7 +463,7 @@ class ActivityClient:
             self.uncertain = self.uncertain or uncertain
 
     def read(self, endpoint, body=None):
-        if endpoint == 'drawPrize':
+        if endpoint in {'drawPrize', 'signFinishTask', 'receiveSign'}:
             raise ActivityError('领取请求不能自动重放', 'INVALID_ENDPOINT')
         renewed = False
         if self.app_credentials_provider is not None:

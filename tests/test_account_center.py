@@ -283,5 +283,31 @@ class AccountCenterTests(unittest.TestCase):
         flow.send_sms.assert_called_once()
 
 
+    def test_service_cancellation_sms_blocks_relogin_and_logout_only_for_its_account(self):
+        cancellations = self.app.extensions['services_queries'].cancellations
+        with patch.object(cancellations, 'busy_login', side_effect=lambda login_id: login_id == self.a.id), patch('app.AppLoginSession') as factory:
+            for route, payload in (
+                ('/api/logins/relogin/sms', {'id': self.a.id, 'force': True}),
+                ('/api/logins/relogin', {'id': self.a.id, 'force': True, 'code': '123456'}),
+                ('/api/logins/logout', {'id': self.a.id}),
+            ):
+                with self.subTest(route=route):
+                    response = self.http.post(route, json=payload)
+                    self.assertEqual(response.status_code, 409)
+                    self.assertIn('退订', response.json['error'])
+            factory.assert_not_called()
+            self.assertEqual(self.http.post('/api/logins/logout', json={'id': self.b.id}).status_code, 200)
+        self.assertIsNotNone(self.app.extensions['unified_logins'].get_id(self.a.id))
+
+    def test_service_cancellation_sms_defers_background_identity_refresh_and_business_recovery(self):
+        cancellations = self.app.extensions['services_queries'].cancellations
+        with patch.object(cancellations, 'busy_login', return_value=True), patch('app.AppLoginSession.refresh') as refresh:
+            self.assertFalse(self.app.extensions['session_maintenance'].check(self.a))
+            snapshot = self.app.extensions['unified_logins'].credentials(self.a.id)
+            with self.assertRaises(AppLoginError):
+                self.app.extensions['app_identity_recover'](snapshot)
+            refresh.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

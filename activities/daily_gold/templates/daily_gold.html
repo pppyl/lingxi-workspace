@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>天天转金喜 · 本地工具台</title><link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css"><link rel="stylesheet" href="/activities/daily-gold/static/daily-gold.css">
+  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script><script src="/activities/daily-gold/static/daily-gold.js" defer></script>
+  <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
+  <script src="/static/mobile.js?v=mobile-1" defer></script>
+</head>
+<body class="workspace-app" data-workspace="daily-gold">
+<main class="portal-shell gold-shell">
+  <section class="gold-heading">
+    <div><div class="gold-period"><span class="gold-limited">短期活动</span><span id="gold-period">正在读取活动时间…</span></div><h1>天天转金喜</h1><p>每日自动打卡，集中查看各账号已领取的奖品。</p></div>
+    <div class="gold-heading-actions"><button id="gold-refresh" class="secondary" type="button">刷新</button><button id="gold-configure" class="primary" type="button" disabled>自动设置</button></div>
+  </section>
+  <p id="gold-warning" class="gold-notice" role="status" hidden></p><p id="gold-feedback" class="gold-feedback" role="status" hidden></p>
+  <section id="gold-ended" class="gold-ended" hidden><h2>活动已结束</h2><p>自动任务已停止，已领奖品仍可在下方查看。可前往平台管理永久移除此活动。</p></section>
+  <section class="gold-panel" aria-label="天天转金喜账号情况">
+    <div class="gold-toolbar"><div><h2>共享账号 <span id="gold-total">—</span></h2><p id="gold-summary">正在读取各账号进度…</p></div><div class="gold-filters"><select id="gold-filter" aria-label="筛选打卡状态"><option value="all">全部账号</option><option value="pending">今日待打卡</option><option value="signed">今日已打卡</option><option value="prizes">有已领奖品</option><option value="attention">需要处理</option></select><input id="gold-search" type="search" placeholder="搜索备注或号码尾号" aria-label="搜索天天转金喜账号" autocomplete="off"></div></div>
+    <div class="gold-auto-summary"><span id="gold-auto-summary">所有有效账号自动参与，新增或恢复登录后自动纳入。</span><span>北京时间</span></div>
+    <div class="gold-table-wrap"><table class="gold-table" aria-label="账号打卡与奖品"><colgroup><col class="gold-col-account"><col class="gold-col-signin"><col class="gold-col-prizes"><col class="gold-col-next"><col class="gold-col-recent"><col class="gold-col-actions"></colgroup><thead><tr><th scope="col">共享账号</th><th scope="col">今日打卡</th><th scope="col">已领奖品</th><th scope="col">下次自动打卡 · 北京时间</th><th scope="col">最近结果</th><th scope="col">操作</th></tr></thead><tbody id="gold-accounts"><tr><td class="gold-empty" colspan="6">正在读取各账号进度…</td></tr></tbody></table></div>
+    <div class="gold-panel-footer"><span id="gold-sync">北京时间</span><span>已完成的打卡不会重复提交</span></div>
+  </section>
+  <details id="gold-rules" class="gold-rules" hidden><summary>活动规则</summary><p id="gold-rules-text"></p></details>
+</main>
+<dialog id="gold-settings" aria-labelledby="gold-settings-title"><form id="gold-settings-form">
+  <div class="gold-dialog-heading"><div><h2 id="gold-settings-title">自动打卡设置</h2><p>应用于所有有效账号，无需逐个选择。</p></div><button id="gold-settings-close" class="close quiet" type="button" aria-label="关闭自动设置">×</button></div>
+  <label class="gold-toggle"><span><strong>每日自动打卡</strong><small>晚启动或账号恢复后，补做当天尚未完成的打卡。</small></span><input id="gold-enabled" type="checkbox" checked role="switch"></label>
+  <div class="gold-field"><label for="gold-start-time">每日开始时间 <small>北京时间，精确到秒</small></label><input id="gold-start-time" type="time" step="1" value="00:00:01" required></div>
+  <div class="gold-form-grid"><div class="gold-field"><label for="gold-repeat-count">最多尝试次数</label><input id="gold-repeat-count" type="number" min="1" step="1" value="5" required></div><div class="gold-field"><label for="gold-interval">尝试间隔 <small>秒</small></label><input id="gold-interval" type="number" min="0.1" step="0.1" value="1" required></div></div>
+  <p class="gold-settings-note">官方确认打卡成功后即停止本轮；结果不确定时先核对进度，不重复提交。资格不符合或请求受限时停止自动尝试，并保留官方原因。</p>
+  <p id="gold-settings-error" class="gold-dialog-error" role="alert" hidden></p><div class="gold-dialog-actions"><button id="gold-settings-cancel" class="secondary" type="button">取消</button><button id="gold-settings-save" class="primary" type="submit">保存设置</button></div>
+</form></dialog>
+<dialog id="gold-records" aria-labelledby="gold-records-title"><div class="gold-dialog-heading"><div><h2 id="gold-records-title">执行记录</h2><p id="gold-records-account"></p></div><button id="gold-records-close" class="close quiet" type="button" aria-label="关闭执行记录">×</button></div><div id="gold-records-list" class="gold-records-list"></div></dialog>
+</body>
+</html>

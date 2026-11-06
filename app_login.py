@@ -6,6 +6,7 @@ initialization, SMS, OTP login and Cookie-to-Lingxi exchange are live verified.
 from __future__ import annotations
 
 import base64
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -33,6 +34,7 @@ REQUEST_KEY_14 = b"tVkdaRWRY0ZkV1Vr"
 RESPONSE_KEY_14 = b"RYV0hCV1lV25KYVJ"
 IV_14 = b"VjFSQ1ZtVkQxRTlQ"
 APP_HOST = "https://client.app.coc.10086.cn"
+APP_IT_HOST = "https://clientaccess.10086.cn"
 SEND_SMS_PATH = "/biz-orange/LN/uamrandcode/sendMsgLoginNew"
 LOGIN_PATH = "/biz-orange/LN/uamsmscode/login"
 INIT_PATH = "/biz-orange/DN/init/startInit"
@@ -134,6 +136,9 @@ class AppLoginSession:
     refresh_token: str = field(default='', repr=False)
     validity_term: str | int = field(default='')
     refreshed_at: float = 0
+    transport: object = field(default=None, repr=False, compare=False)
+    gateway_host: str = field(default=APP_HOST, repr=False, compare=False)
+    request_version: int = field(default=14, repr=False, compare=False)
 
     @classmethod
     def from_credentials(cls, credentials):
@@ -165,21 +170,23 @@ class AppLoginSession:
                 self.cookie = merge_app_cookie(self.cookie, [profile['cookie']])
 
     def envelope(self, body: dict, *, login_component: bool = False) -> dict:
+        authenticated = self.gateway_host == APP_IT_HOST and self.app_authenticated and bool(self.phone)
         value = {
             "ak": "F4AA34B89513F0D087CA0EF11A3277469DC74905", "cid": client_id(self.device_id), "ctid": client_id(self.device_id),
-            "city": "", "prov": "", "cv": "12.5.6", "en": "0",
+            "city": str(self.user_info.get('cityCode') or '') if authenticated else '',
+            "prov": str(self.user_info.get('provinceCode') or '') if authenticated else '', "cv": "12.5.6", "en": "0",
             "imei": "", "nt": "3", "packageName": "com.greenpoint.android.mc10086.activity",
             "reqBody": body, "sb": "Xiaomi", "sn": "2210132C", "sp": "1080x2250",
-            "st": "1", "sv": "16", "t": md5(self.cookie) if self.cookie else "", "tel": "99999999999", "xc": "A2081", "xk": self.xk,
+            "st": "1", "sv": "16", "t": md5(self.cookie) if self.cookie else "", "tel": self.phone if authenticated else '99999999999', "xc": "A2081", "xk": self.xk,
         }
         if login_component:
             value.update(appKey="00000159", baseFrameVersion="0.0.1", componentID="BI2021SA000055", componentVersion="2.0.0")
         return value
 
     def call(self, path: str, body: dict) -> tuple[int, dict, dict]:
-        url = APP_HOST + path
-        data, headers = wire_request(url, self.envelope(body, login_component="/LN/" in path), xk=self.xk, cookie=self.cookie)
-        with requests.Session() as client:
+        url = self.gateway_host + path
+        data, headers = wire_request(url, self.envelope(body, login_component="/LN/" in path), xk=self.xk, cookie=self.cookie, version=self.request_version)
+        with (nullcontext(self.transport) if self.transport is not None else requests.Session()) as client:
             try:
                 response = client.post(url, data=data, headers=headers, timeout=(10, 25), allow_redirects=False, http_version=CurlHttpVersion.V2_0)
             except RequestException as exc:
@@ -187,7 +194,9 @@ class AppLoginSession:
             text = response.text
             pen = response.headers.get("x-pen", "")
             if response.status_code != 200:
-                raise AppLoginError(f"APP 登录网关返回 HTTP {response.status_code}。")
+                error = AppLoginError(f"APP 登录网关返回 HTTP {response.status_code}。")
+                error.response = response
+                raise error
             try:
                 if pen == "2":
                     text = aes_decrypt(text)

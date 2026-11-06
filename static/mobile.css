@@ -1,0 +1,259 @@
+/* Desktop layouts stay in the page stylesheets. Mobile uses a single page scroll. */
+.information-section-nav{display:none}
+.workspace-app .workspace-nav-close{display:none}
+@media(max-width:900px){
+  :root{--ws-sidebar:0px;--ws-topbar:60px;scroll-padding-top:76px;scrollbar-gutter:auto}
+  html{max-width:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  body.workspace-app{padding-left:0;min-width:0;padding-bottom:env(safe-area-inset-bottom)}
+  body.workspace-app>:is(.portal-shell,.shell,.task-shell,.activity-shell){padding:20px 14px 24px;max-width:100%;min-width:0}
+  body.workspace-app :is(main,section,form,fieldset,article,aside){min-width:0}
+  body.workspace-app :is(h1,h2,h3,h4,p,dd,small){overflow-wrap:anywhere}
+  body.workspace-app h1{font-size:24px}
+  body.workspace-app h2{font-size:17px}
+  body.workspace-app :is(input,textarea,select){min-width:0;max-width:100%;font-size:16px!important}
+  body.workspace-app :is(input[type="checkbox"],input[type="radio"]){width:18px;height:18px;flex-shrink:0;accent-color:var(--ws-blue)}
+  body.workspace-app button:not([role="switch"]){min-height:40px;touch-action:manipulation}
+  body.workspace-app :is(img,iframe,video,canvas){max-width:100%}
+  body.workspace-app .workspace-topbar{padding:0 12px;gap:10px;padding-top:env(safe-area-inset-top)}
+  .workspace-location{flex:1;gap:8px;overflow:hidden}
+  .workspace-location strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+  .workspace-location-root,.workspace-location-parent,.workspace-location-divider{display:none}
+  body.workspace-app .workspace-menu{display:flex;justify-content:center;align-items:center;flex:0 0 40px;padding:0}
+  .workspace-topbar-actions{flex-shrink:0;gap:8px}
+  body.workspace-app .workspace-account-button{gap:5px;font-size:11px;white-space:nowrap;border:0;padding:0}
+  body.workspace-app .workspace-local{display:none}
+  .workspace-account-avatar{width:28px;height:28px}
+  body.workspace-app .workspace-nav{width:min(290px,84vw);padding-bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-100%);transition:transform .2s;z-index:50}
+  body.workspace-app.workspace-nav-open .workspace-nav{transform:translateX(0)}
+  body.workspace-app.workspace-nav-open{overflow:hidden}
+  .workspace-nav-open .workspace-nav-shade{display:block;position:fixed;inset:0;z-index:45;border:0;border-radius:0;background:#162b4d66}
+  body.workspace-app .workspace-nav-close{position:absolute;right:12px;top:21px;display:flex;align-items:center;justify-content:center;width:36px;height:36px;min-height:36px;padding:0;border:0;border-radius:6px;background:#ffffff0b;color:#b6c4d9;cursor:pointer}
+  .workspace-nav-close svg{width:20px;height:20px}
+  body.workspace-app .workspace-brand{padding-right:34px;font-size:17px;gap:8px}
+  body.workspace-app .workspace-nav :is(.workspace-nav-item,.workspace-subnav-item,.workspace-nav-group>summary){min-height:44px;padding-block:12px}
+  body.workspace-app .workspace-nav-footer{padding-top:16px}
+  body.workspace-app .workspace-nav-footer .network-copy{min-width:44px;min-height:44px}
+  body.workspace-app .workspace-nav-footer .network-settings-link{display:inline-flex;align-items:center;min-height:40px;margin-top:0}
+  body.workspace-app .workspace-nav-footer .network-more summary{min-height:40px;padding-block:12px}
+
+  body.workspace-app .workspace-nav-item{min-height:46px}
+  body.workspace-app :is(.heading,.page-heading,.bills-heading,.platforms-heading){gap:14px;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap}
+  body.workspace-app :is(.heading-actions,.dialog-actions,.row-actions,.task-actions,.checkin-row-actions,.monthly-actions,.star-actions,.wed-actions){gap:8px;flex-wrap:wrap;max-width:100%}
+  body.workspace-app .heading-actions{width:100%;justify-content:flex-start}
+  body.workspace-app .heading-actions>button{flex:1 1 auto;white-space:nowrap}
+  body.workspace-app :is(.list-toolbar,.checkin-toolbar,.monthly-toolbar,.star-toolbar,.coupons-toolbar,.gold-toolbar,.seven-toolbar,.wed-toolbar){padding:14px;gap:12px;flex-wrap:wrap;align-items:center}
+  body.workspace-app :is(.filters,.filter-tabs,.checkin-tabs,.coupons-tabs,.star-tabs,.wed-tabs,.gold-filters,.seven-filters,.wed-filters){display:flex;flex-wrap:nowrap;gap:5px;min-width:0;max-width:100%;overflow-x:auto;scrollbar-width:thin}
+  body.workspace-app :is(.filters,.filter-tabs,.checkin-tabs,.coupons-tabs,.star-tabs,.wed-tabs,.gold-filters,.seven-filters,.wed-filters)>button{flex-shrink:0;white-space:nowrap;padding:9px 12px}
+  body.workspace-app :is(.task-search-toolbar,.coupons-filters,.monthly-filters,.checkin-filters,.star-filters){display:flex;flex-wrap:wrap;gap:9px;padding:13px 14px}
+  body.workspace-app :is(.task-search-toolbar,.coupons-filters,.monthly-filters,.checkin-filters,.star-filters)>:is(input,label,.task-search){flex:1 1 100%;min-width:0;max-width:100%}
+  body.workspace-app :is(.task-search-toolbar,.coupons-filters,.monthly-filters,.checkin-filters,.star-filters)>select{flex:1 1 130px;width:0;min-width:0}
+  body.workspace-app :is(.batch-toolbar,.checkin-selection,.monthly-selection,.star-selection,.gold-selection,.seven-selection,.wed-selection){padding:12px 14px;gap:10px;flex-wrap:wrap;align-items:center}
+  body.workspace-app :is(.batch-toolbar,.checkin-selection,.monthly-selection,.star-selection,.gold-selection,.seven-selection,.wed-selection)>div{margin-left:0;max-width:100%;gap:8px;flex-wrap:wrap}
+
+  /* Wide management tables become labeled records without replacing live controls. */
+  body.workspace-app :is(.table-wrap,.task-table-wrap,.checkin-table-wrap,.monthly-table-wrap,.coupons-table-wrap,.star-table-wrap,.platforms-table-wrap,.account-table-wrap,.gold-table-wrap,.seven-table-wrap,.wed-table-wrap){width:100%;max-width:100%;max-height:none;overflow:visible}
+  body.workspace-app table.mobile-record-table{display:block;width:100%;min-width:0!important;table-layout:auto;border:0;border-spacing:0}
+  body.workspace-app .mobile-record-table>colgroup{display:none}
+  body.workspace-app .mobile-record-table>thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  body.workspace-app .mobile-record-table>tbody{display:block;width:100%}
+  body.workspace-app .mobile-record-table>tbody>tr{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 16px;padding:17px 14px;width:100%;border-bottom:1px solid var(--ws-line);background:#fff}
+  body.workspace-app .mobile-record-table>tbody>tr:last-child{border-bottom:0}
+  body.workspace-app .mobile-record-table>tbody>tr>td{position:static;inset:auto;z-index:auto;display:block;width:auto!important;min-width:0;max-width:100%;padding:0!important;border:0;white-space:normal;text-align:left;overflow-wrap:anywhere;font-size:13px;line-height:1.75;background:transparent;box-shadow:none}
+  body.workspace-app .mobile-record-table>tbody>tr>td::before{content:attr(data-mobile-label);display:block;margin-bottom:4px;color:#91a0b6;font-size:11px;font-weight:400;line-height:1.5}
+  body.workspace-app .mobile-record-table>tbody>tr>.mobile-primary-cell{grid-column:1/-1;padding-right:32px!important;color:#294b70}
+  body.workspace-app .mobile-record-table .mobile-primary-cell::before{display:none}
+  body.workspace-app .mobile-record-table .mobile-primary-cell strong{font-size:15px}
+  body.workspace-app .mobile-primary-cell>small{display:block;margin-top:4px;color:#91a0b6;font-size:11px}
+  body.workspace-app .mobile-record-table>tbody>tr>.mobile-wide-cell{grid-column:1/-1}
+  body.workspace-app .mobile-record-table>tbody>tr>.mobile-select-cell{position:absolute;right:14px;top:17px;width:24px!important;height:28px;display:flex;align-items:flex-start;justify-content:flex-end}
+  body.workspace-app .mobile-wide-cell>button+button{margin-left:8px}
+  body.workspace-app .mobile-record-table .mobile-select-cell::before{display:none}
+  body.workspace-app .mobile-record-table>tbody>.mobile-empty-row{display:block;padding:28px 18px}
+  body.workspace-app .mobile-record-table>.mobile-empty-row>td::before,body.workspace-app .mobile-record-table .mobile-empty-row>td::before{display:none}
+  body.workspace-app .mobile-record-table :is(.row-actions,.task-actions,.checkin-actions,.star-actions,.monthly-actions){display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;margin:0}
+  body.workspace-app .mobile-record-table :is(time,.task-time){white-space:normal;font-variant-numeric:tabular-nums}
+  body.workspace-app .mobile-record-table :is(.reply-preview,.task-content,.task-note){max-width:100%;-webkit-line-clamp:unset;overflow:visible}
+  body.workspace-app .account-table .account-ready{background:#eef9f1}
+  body.workspace-app .account-table .account-expired{background:#fff8e6}
+  body.workspace-app .account-table .account-pending{background:#f7f9fc}
+  body.workspace-app .account-table .account-name input{font-size:16px;max-width:100%;padding:9px 10px}
+  body.workspace-app .mobile-compact-table{min-width:0;width:100%;table-layout:fixed}
+  body.workspace-app .mobile-compact-table :is(th,td){padding:10px 8px;overflow-wrap:anywhere;white-space:normal;font-size:12px}
+
+  /* Shared account choices use one compact swipeable strip, including expired state. */
+  body.workspace-app .mobile-account-strip{display:grid!important;grid-template-columns:none!important;grid-template-rows:auto;grid-auto-flow:column;grid-auto-columns:minmax(140px,44%);gap:8px;width:100%;min-width:0;max-width:100%;max-height:none;overflow-x:auto;overflow-y:hidden;padding:2px 1px 10px;scroll-snap-type:x proximity;scroll-padding:1px;scrollbar-width:thin}
+  body.workspace-app .mobile-account-strip>*{width:auto;min-width:0;max-width:none;scroll-snap-align:start}
+  body.workspace-app .mobile-account-strip>:is(button,.account-pill){margin:0;padding:11px 12px;min-height:65px}
+  body.workspace-app .mobile-account-strip :is(.bills-account-label,.coupons-account-label){gap:6px;flex-wrap:wrap}
+  body.workspace-app .mobile-account-strip small{font-size:11px}
+  body.workspace-app .mobile-account-strip :is(.bills-account-state,.coupons-account-state){font-size:10px}
+  body.workspace-app .mobile-account-strip .account-choice{display:flex;flex-direction:column;min-width:0;align-self:stretch}
+  body.workspace-app .mobile-account-strip .account-choice-select{width:100%;padding:10px;gap:7px;align-items:flex-start}
+  body.workspace-app .mobile-account-strip .account-choice-avatar{display:none}
+  body.workspace-app .mobile-account-strip .account-choice-title{flex-wrap:wrap;gap:3px}
+  body.workspace-app .mobile-account-strip .account-choice-note{padding:0 10px 10px;min-width:0;flex-wrap:wrap}
+
+  /* Information query: full-width sections and quick anchors on phones. */
+  body.workspace-app .information-columns{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;overflow:visible}
+  body.workspace-app .information-columns>section{width:100%;scroll-margin-top:124px}
+  .information-section-nav{display:flex;position:sticky;top:calc(var(--ws-topbar) + 6px);z-index:6;gap:4px;padding:5px;margin:0 0 16px;border:1px solid #e2eaf5;border-radius:9px;background:#ffffffed;backdrop-filter:blur(10px)}
+  .information-section-nav a{flex:1;text-align:center;min-height:40px;padding:9px 5px;font-size:13px;color:#527aa8;border-radius:6px;white-space:nowrap}
+  .information-section-nav a:active,.information-section-nav a:focus-visible{background:#edf4ff;color:#1764ff}
+  body.workspace-app .information-columns :is(.usage-toolbar,.bills-toolbar,.services-toolbar){min-height:0;padding:17px 16px;flex-direction:row;align-items:center;flex-wrap:wrap;gap:10px}
+  body.workspace-app .information-columns .bills-month-controls{width:100%;gap:5px}
+  body.workspace-app .information-columns .bills-months{grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;padding:12px 8px}
+  body.workspace-app .information-columns .bills-month-tab{min-width:0;min-height:56px;padding:7px 0}
+  body.workspace-app .information-columns .bills-month-tab strong{font-size:14px;white-space:nowrap}
+  body.workspace-app .information-columns .bills-month-tab span{font-size:10px;white-space:nowrap}
+  body.workspace-app .information-columns .usage-overview{grid-template-columns:minmax(0,1fr);padding:14px 12px 7px}
+  body.workspace-app .information-columns .usage-overview-card{padding:15px 13px}
+  body.workspace-app .information-columns .usage-remaining>.usage-quantity{font-size:28px}
+  body.workspace-app .information-columns .usage-overview-heading h3{font-size:13px}
+  body.workspace-app .information-columns .usage-overview-counters .usage-quantity{font-size:13px}
+  body.workspace-app .information-columns .bills-summary{padding:23px 19px}
+  body.workspace-app .information-columns .bills-breakdown{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;padding:12px 0}
+  body.workspace-app .information-columns .bills-breakdown>div{display:block;padding:0 7px;border-left:1px solid #ffffff2e}
+  body.workspace-app .information-columns .bills-breakdown>div:first-child{border-left:0}
+  body.workspace-app .information-columns .bills-breakdown strong{font-size:18px}
+  body.workspace-app .bills-table td:first-child{padding-left:8px!important}
+  body.workspace-app .services-tabs{padding:8px;gap:4px}
+  body.workspace-app .services-search-options{font-size:11px}
+  body.workspace-app .services-search-options>label{min-height:36px;font-size:12px}
+  body.workspace-app button.services-tab{font-size:12px;min-height:40px}
+  body.workspace-app .services-table .services-name-label{font-size:13px}
+  body.workspace-app .services-table th:last-child{width:76px}
+  body.workspace-app button.services-cancel-action{min-width:48px;font-size:12px}
+  body.workspace-app .services-validity{font-size:10px}
+  body.workspace-app .services-fields dd{font-size:12px}
+
+  /* Forms, account management, payment and task dialogs fit the viewport. */
+  body.workspace-app dialog{width:calc(100vw - 24px)!important;max-width:560px!important;max-height:calc(100dvh - 28px);margin:auto;padding:20px 16px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+  body.workspace-app dialog :is(form,fieldset){max-width:100%;min-width:0}
+  body.workspace-app dialog :is(.form-row,.star-form-row,.star-settings-grid,.gold-form-grid,.seven-form-grid,#star-gift-form){grid-template-columns:minmax(0,1fr);gap:13px}
+  body.workspace-app dialog :is(.dialog-actions,.star-dialog-actions,.checkin-dialog-actions,.monthly-dialog-actions,.gold-dialog-actions,.seven-dialog-actions,.wed-dialog-actions,.services-cancel-footer){gap:8px;flex-wrap:wrap}
+  body.workspace-app dialog :is(.dialog-actions,.star-dialog-actions,.checkin-dialog-actions,.monthly-dialog-actions,.gold-dialog-actions,.seven-dialog-actions,.wed-dialog-actions,.services-cancel-footer)>button{flex:1;min-height:44px}
+  body.workspace-app dialog :is(.account-options,.star-account-options,.checkin-account-options,.create-account-list){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:none;overflow:visible}
+  body.workspace-app dialog :is(.account-option,.star-account-option,.checkin-account-option){min-width:0;padding:10px;font-size:13px}
+  body.workspace-app dialog :is(button.close,button.icon-button,button.account-manager-close){flex:0 0 40px;width:40px;height:40px;min-width:40px}
+  body.workspace-app .account-manager-dialog{max-width:100%!important;padding:0}
+  body.workspace-app .account-manager-dialog .account-shell{padding:0 14px 20px}
+  body.workspace-app .account-manager-dialog .manager-grid{grid-template-columns:minmax(0,1fr);gap:16px}
+  body.workspace-app .account-manager-dialog .login-panel{grid-row:1;position:static;padding:17px}
+  body.workspace-app .account-manager-dialog .account-pool-panel{padding:0}
+  body.workspace-app .account-manager-dialog .panel-title{padding:16px 14px}
+  body.workspace-app .account-manager-dialog .account-table-wrap{max-height:none;overflow:visible}
+  body.workspace-app :is(.coupons-pay-grid,.coupons-use-grid,.coupons-pay-layout,.coupons-payment-grid){grid-template-columns:minmax(0,1fr)}
+  body.workspace-app :is(.coupons-pay-box,.coupons-payment){max-width:100%;padding:15px}
+  body.workspace-app :is(.coupons-pay-qr,.coupons-payment-qr){width:min(100%,280px);height:auto;margin-inline:auto}
+  body.workspace-app :is(.manager-code-row,.star-sms-input,.services-cancel-code-row){gap:8px}
+  body.workspace-app :is(.manager-code-row,.star-sms-input,.services-cancel-code-row)>input{width:0;flex:1;min-width:0}
+  body.workspace-app :is(.manager-code-row,.star-sms-input,.services-cancel-code-row)>button{flex-shrink:0;font-size:12px;padding-inline:10px}
+  body.workspace-app :is(.platforms-panel-heading,.pool-heading,.account-pool-heading){padding:17px 14px;gap:10px;flex-wrap:wrap}
+  body.workspace-app :is(.network-settings-grid,.network-controls,.access-settings-fields){grid-template-columns:minmax(0,1fr)}
+  body.workspace-app .platforms-panel-heading p{max-width:100%}
+  body.workspace-app .access-settings form{padding:0 14px 18px}
+  body.workspace-app .access-settings-note{padding:0 14px 18px}
+  body.workspace-app :is(.network-address,.network-listen-address){overflow-wrap:anywhere;min-width:0}
+  body.workspace-app .chat-layout{display:flex;flex-direction:column;padding:18px 14px;gap:16px;min-height:0}
+  body.workspace-app .chat-accounts{display:block;width:100%;padding:15px}
+  body.workspace-app .chat-accounts>.brand{display:none}
+  body.workspace-app .chat-accounts .login-box{min-width:0}
+  body.workspace-app .chat-accounts .status{font-size:12px}
+  body.workspace-app .chat-account-panel{width:100%;max-width:100%}
+  body.workspace-app .chat-accounts>#new-chat{margin-top:12px;min-height:42px}
+  body.workspace-app .chat-main{width:100%;height:75dvh;min-height:440px;max-height:none}
+  body.workspace-app .chat-main>header{min-height:0;padding-bottom:14px;gap:8px;flex-wrap:wrap}
+  body.workspace-app .chat-main h1{font-size:23px}
+  body.workspace-app .composer{padding:12px}
+  body.workspace-app .composer-bottom{gap:8px;flex-wrap:wrap}
+  body.workspace-app #messages{min-height:0;overflow-wrap:anywhere}
+  body.workspace-app .welcome{margin:8vh auto}
+  body.workspace-app .welcome h2{font-size:22px}
+  body.workspace-app .dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dashboard-stats .dashboard-stat{min-width:0;padding:15px 12px;gap:10px}
+  body.workspace-app .dashboard-stat strong{font-size:24px}
+  body.workspace-app .dashboard-panels{grid-template-columns:minmax(0,1fr)}
+  .access-page{padding:20px 14px;min-width:0}
+  .access-page .access-card{width:100%;padding:26px 20px}
+  .access-page input{font-size:16px}
+}
+@media(min-width:901px) and (max-width:1100px){
+  body.workspace-app .information-columns{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  body.workspace-app .information-columns>#services-content{grid-column:auto}
+}
+
+@media(max-width:900px){
+ body.workspace-app .information-columns :is(.usage-toolbar,.bills-toolbar,.services-toolbar){min-height:68px;padding:12px;gap:8px}
+ body.workspace-app .information-columns .bills-month-controls{width:auto;margin-left:auto;gap:4px}
+ body.workspace-app .information-columns .bills-months{padding:8px;gap:2px}
+ body.workspace-app .information-columns button.bills-month-tab{min-height:40px;padding:4px 2px}
+ body.workspace-app .information-columns .bills-month-tab strong{font-size:13px}
+ body.workspace-app .information-columns .bills-summary{padding:12px}
+ body.workspace-app .information-columns .bills-payable>strong{font-size:30px;line-height:36px}
+ body.workspace-app .information-columns .usage-overview{grid-template-columns:minmax(0,1fr);padding:0 12px;gap:0}
+ body.workspace-app .information-columns .usage-overview-card{grid-template-columns:minmax(80px,1.3fr) repeat(3,minmax(0,1fr));gap:0 8px;padding:12px 0}
+ body.workspace-app .information-columns .usage-remaining{grid-column:4;grid-row:1;margin:0}
+ body.workspace-app .information-columns .usage-remaining>.usage-quantity{font-size:14px}
+ body.workspace-app .information-columns .usage-overview-counters{display:contents}
+ body.workspace-app .information-columns .usage-overview-counters>div{grid-row:1}
+ body.workspace-app .information-columns .usage-overview-counters dd{margin:0;font-size:12px}
+ body.workspace-app .information-columns button.bills-card-heading{padding:10px 0 4px;min-height:40px}
+ body.workspace-app .information-columns .bills-card-summary{padding:0 0 10px 24px}
+ body.workspace-app .information-columns .bills-details-heading{padding:12px;flex-direction:row;gap:8px}
+ body.workspace-app .information-columns button.services-tab{min-height:40px;font-size:12px}
+ body.workspace-app .information-columns button.services-name-label{font-size:12px}
+ body.workspace-app .information-columns .bills-notes>summary,body.workspace-app .usage-overview-meta>summary{min-height:40px;display:flex;align-items:center}
+}
+
+@media(max-width:900px){
+ body.workspace-app .information-columns{grid-template-columns:minmax(0,1fr);grid-template-areas:"usage" "bill" "services";gap:16px}
+ body.workspace-app .bills-account-panel{padding:12px;margin-bottom:12px;background:#fff;border:1px solid #e1e8f1;border-radius:10px}
+ body.workspace-app .information-columns :is(.usage-toolbar,.bills-toolbar,.services-toolbar){min-height:56px;padding:12px}
+ body.workspace-app .information-columns .usage-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:0;gap:0}
+ body.workspace-app .information-columns .usage-overview-card{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto auto;gap:8px;padding:12px;border-bottom:1px solid var(--info-line)}
+ body.workspace-app .information-columns .usage-overview-card:nth-child(even){border-right:0}
+ body.workspace-app .information-columns .usage-remaining{grid-column:1;grid-row:2;margin:0;text-align:left}
+ body.workspace-app .information-columns .usage-remaining>.usage-quantity{font-size:22px;line-height:28px}
+ body.workspace-app .information-columns .usage-overview-counters{display:grid;grid-template-columns:1fr 1fr;grid-column:1;grid-row:3;gap:8px}
+ body.workspace-app .information-columns .usage-overview-counters>div{grid-column:auto;grid-row:auto}
+ body.workspace-app .information-columns .usage-overview-counters dd{font-size:13px;line-height:20px;margin-top:2px}
+ body.workspace-app .information-columns .usage-overview-meta{grid-column:1;grid-row:4}
+ body.workspace-app .information-columns .usage-detail-section{padding:0 12px 8px}
+ body.workspace-app .information-columns .usage-groups{grid-template-columns:minmax(0,1fr)}
+ body.workspace-app .information-columns .bills-overview{grid-template-columns:minmax(0,1fr)}
+ body.workspace-app .information-columns .bills-summary{padding:12px}
+ body.workspace-app .information-columns .bills-balance{flex-direction:row;align-items:baseline;justify-content:flex-start;flex-wrap:wrap;gap:4px 8px;padding:12px;border:0;border-top:1px solid var(--info-line)}
+ body.workspace-app .information-columns .bills-balance-note{width:100%}
+ body.workspace-app .information-columns .bills-details-heading{padding:12px}
+ body.workspace-app .information-columns .bills-detail-grid{padding:0 12px 8px}
+ body.workspace-app .information-columns button.bills-card-heading{padding:8px 0 2px;min-height:40px}
+ body.workspace-app .information-columns .services-search-tools{flex-wrap:wrap;padding:12px;gap:8px}
+ body.workspace-app .information-columns .services-search-field,body.workspace-app .information-columns .services-search-options{width:100%;flex-basis:100%}
+ body.workspace-app .information-columns .services-search-options{justify-content:space-between}
+ body.workspace-app .information-columns .services-search-options>span{display:block}
+ body.workspace-app .bills-additional{padding-inline:12px}.information-columns .bills-additional .bills-extra-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+@media(max-width:900px){
+ body.workspace-app .usage-overview-labels{display:grid;grid-template-columns:minmax(80px,1.3fr) repeat(3,minmax(0,1fr));gap:0 8px;padding:8px 12px}
+ body.workspace-app .information-columns .usage-overview{grid-template-columns:minmax(0,1fr);padding:0 12px}
+ body.workspace-app .information-columns .usage-overview-card{grid-template-columns:minmax(80px,1.3fr) repeat(3,minmax(0,1fr));grid-template-rows:auto auto;gap:4px 8px;padding:8px 0;border:0;border-bottom:1px solid var(--info-line)}
+ body.workspace-app .information-columns .usage-overview-heading{grid-column:1;grid-row:1}
+ body.workspace-app .information-columns .usage-overview-heading h3{font-size:12px;line-height:20px}
+ body.workspace-app .information-columns .usage-remaining{display:block;grid-column:4;grid-row:1;text-align:right}
+ body.workspace-app .information-columns .usage-remaining>.usage-quantity{font-size:14px;line-height:20px}
+ body.workspace-app .information-columns .usage-remaining-label,body.workspace-app .information-columns .usage-overview-counters dt{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+ body.workspace-app .information-columns .usage-overview-counters{display:contents}
+ body.workspace-app .information-columns .usage-overview-counters>div{grid-row:1;text-align:right}
+ body.workspace-app .information-columns .usage-overview-counters>div:first-child{grid-column:2}
+ body.workspace-app .information-columns .usage-overview-counters>div:last-child{grid-column:3}
+ body.workspace-app .information-columns .usage-overview-counters dd{font-size:12px;line-height:20px;margin:0}
+ body.workspace-app .information-columns .usage-overview-meta{grid-column:1/-1;grid-row:auto}
+ body.workspace-app .information-columns .usage-overview-meta>summary{min-height:32px}
+}
+
+@media(max-width:900px){
+ body.workspace-app .information-columns .usage-meter-row{grid-column:1/-1;grid-row:2;margin-top:4px}
+ body.workspace-app .information-columns .usage-overview-card{align-content:start}
+}
+
+@media(max-width:900px){body.workspace-app .usage-overview-values{display:contents}}

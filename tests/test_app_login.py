@@ -3,17 +3,72 @@ from datetime import datetime, timezone
 import json
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from app_login import (
-    AppCredentialError, AppLoginError, AppLoginSession, IV, IV_14, REQUEST_KEY, REQUEST_KEY_14,
+    APP_IT_HOST, AppCredentialError, AppLoginError, AppLoginSession, IV, IV_14, REQUEST_KEY, REQUEST_KEY_14,
     aes_decrypt, aes_encrypt, client_id, encrypt_phone, md5, wire_request,
 )
 
 
 class AppLoginTests(unittest.TestCase):
+    def test_it_gateway_sends_legacy_encryption_and_signs_the_actual_official_url(self):
+        headers=Mock();headers.get.return_value='';headers.get_list.return_value=[]
+        transport=Mock();transport.post.return_value=Mock(status_code=200,text='{"retCode":"000000"}',headers=headers)
+        flow=AppLoginSession.from_credentials({'phone':'19900000000','cookie':'JSESSIONID=unit',
+             'profile':{'provinceCode':'851'},'app_context':{'device_id':'unit','xk':'unit'}})
+        flow.gateway_host,flow.request_version,flow.transport=APP_IT_HOST,2,transport
+        payload={'cellNum':flow.phone,'busType':'1','productName':'测试业务'}
+        flow.call('/biz-orange/BH/sms/getSmsCode',payload)
+        call=transport.post.call_args
+        self.assertEqual(call.args[0],APP_IT_HOST+'/biz-orange/BH/sms/getSmsCode')
+        self.assertEqual(call.kwargs['headers']['x-qen'],'2')
+        clear=aes_decrypt(call.kwargs['data'],REQUEST_KEY,IV)
+        self.assertEqual(json.loads(clear)['reqBody'],payload)
+        self.assertEqual(json.loads(clear)['tel'],flow.phone)
+        self.assertEqual(call.kwargs['headers']['xs'],md5(call.args[0]+'_'+clear+'_Leadeon/SecurityOrganization'))
+        default=AppLoginSession.from_credentials({'phone':flow.phone,'cookie':flow.cookie})
+        self.assertEqual(default.gateway_host,'https://client.app.coc.10086.cn')
+        self.assertEqual(default.request_version,14)
+
+    def test_gateway_http_error_keeps_response_for_safe_diagnostics_and_is_not_success(self):
+        response=Mock(status_code=403,headers=Mock(),text='Forbidden')
+        flow=AppLoginSession(transport=Mock())
+        flow.transport.post.return_value=response
+        with self.assertRaises(AppLoginError) as raised:
+            flow.call('/biz-orange/BH/sms/getSmsCode',{})
+        self.assertIn('HTTP 403',str(raised.exception))
+        self.assertIs(raised.exception.response,response)
+        flow.transport.post.assert_called_once()
+
+    def test_authenticated_business_envelope_uses_native_logged_in_identity_and_region(self):
+        flow=AppLoginSession.from_credentials({'phone':'19900000000','cookie':'JSESSIONID=unit',
+             'profile':{'provinceCode':'851','cityCode':'0851'},'app_context':{'device_id':'unit','xk':'unit'}})
+        body={'cellNum':flow.phone,'busType':'1','productName':'测试业务'}
+        self.assertEqual(flow.envelope(body)['tel'],'99999999999')
+        flow.gateway_host,flow.request_version=APP_IT_HOST,2
+        envelope=flow.envelope(body)
+        self.assertEqual((envelope['tel'],envelope['prov'],envelope['city']),('19900000000','851','0851'))
+        self.assertEqual(envelope['reqBody'],body)
+        flow.app_authenticated=False
+        anonymous=flow.envelope(body,login_component=True)
+        self.assertEqual((anonymous['tel'],anonymous['prov'],anonymous['city']),('99999999999','',''))
+        self.assertEqual(anonymous['componentID'],'BI2021SA000055')
+
+    def test_caller_owned_connection_is_reused_with_latest_cookie_and_not_closed_by_each_call(self):
+        headers=Mock();headers.get.return_value='';headers.get_list.return_value=['JSESSIONID=rotated']
+        response=Mock(status_code=200,text='{"retCode":"000000","rspBody":{}}',headers=headers)
+        transport=Mock();transport.post.return_value=response
+        flow=AppLoginSession(cookie='JSESSIONID=original',transport=transport)
+        with patch('app_login.requests.Session') as create:
+            flow.call('/first',{});flow.call('/second',{})
+        create.assert_not_called();transport.close.assert_not_called()
+        self.assertEqual(transport.post.call_count,2)
+        self.assertEqual(transport.post.call_args_list[0].kwargs['headers']['Cookie'],'JSESSIONID=original')
+        self.assertEqual(transport.post.call_args_list[1].kwargs['headers']['Cookie'],'JSESSIONID=rotated')
+
     def test_crypto_matches_independent_reference_vectors(self):
         # Cross-checked with PyCryptodome, separately from the implementation.
         self.assertEqual(aes_encrypt("你好|login"), "IHc0peiC5fw0/dox2VYw0g==")

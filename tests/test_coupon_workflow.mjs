@@ -31,7 +31,7 @@ async function fixture(mode,options={}) {
   const http=async(url,fetchOptions)=>{
     const body=fetchOptions?.body?JSON.parse(fetchOptions.body):undefined;calls.push({url,body});
     let result,status=200;
-    if(url==='/api/coupons/accounts')result={accounts:options.accounts||[{id:'account',status:'active',name:'fixture',phone_masked:'138****0000'}]};
+    if(url==='/api/coupons/accounts')result={accounts:options.accounts||[{id:'account',status:'active',name:'fixture',phone_masked:'138****0000'}],reminders:{accounts:options.reminders||{}}};
     else if(url==='/api/coupons/notices')result=options.notices||{notices:[],checked_at:null,stale:false,message:''};
     else if(url.startsWith('/api/coupons/pending?')){
       if(options.failPendingRead&&calls.filter(c=>c.url.startsWith('/api/coupons/pending?')).length>1)throw new Error('network unavailable');
@@ -43,7 +43,7 @@ async function fixture(mode,options={}) {
       else if(options.countFailureIds?.includes(accountId)){status=401;result={code:'APP_LOGIN_REQUIRED',error:'账号需要重新登录'};}
       else{
         const rows=accepted&&options.consumeOnAccepted?[]:options.itemsByAccount?.[accountId]||[card];
-        result={items:rows,page:1,total:rows.length,has_more:false,pending_orders:pending};
+        result={items:rows,page:1,total:rows.length,has_more:false,pending_orders:pending,reminder:options.reminders?.[accountId]};
       }
     }
     else if(url==='/api/logins/relogin/sms')result={sent:true,phone_masked:'138****0000',retry_after:60};
@@ -80,7 +80,7 @@ async function fixture(mode,options={}) {
     document:{cookie:'session=private; _zw_kvani5r=real-sdk-lid',getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],head:{append(script){script.onload();}}},
     window:{addEventListener:(name,fn)=>{events[name]=fn;},dispatchEvent:event=>dispatched.push(event),publishAccountsChanged:()=>events['accounts-changed'](),
       _zw:{ConstID(config,done){calls.push({url:'official-sdk',body:config});done(options.sdkError||null,options.sdkError?'':'real-sdk-token');}}},fetch:http,location:{origin:'http://localhost:5500'},Intl,URLSearchParams,Date:class extends Date{static now(){return options.now??Date.now();}},
-    CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
+    CustomEvent:class{constructor(type,options={}){this.type=type;this.detail=options.detail;}},
     clearInterval(){},setInterval(){return 1;},clearTimeout(id){timers.delete(id);},
     setTimeout(callback,delay){const id=Symbol();timers.set(id,{callback,delay});return id;},
   });
@@ -293,6 +293,19 @@ for(const mode of ['exchange','rights','flow'])test(`${mode}: accepted exchange 
 });
 
 const renderedText=element=>[element.textContent||'',...element.children.map(renderedText)].join(' ');
+test('account cards show useful fee coupon bubbles separately from all available coupons',async()=>{
+  const accounts=['account','other','empty'].map(id=>({id,name:id,status:'active',credential_revision:1}));
+  const reminders={account:{count:2,unpriced:1},other:{count:4,unpriced:0},empty:{count:0,unpriced:0}};
+  const {get,dispatched,calls}=await fixture('counts',{onlyCounts:true,accounts,reminders});
+  const bubbles=get('coupons-accounts').children.map(card=>card.children[0].children.find(child=>child.className==='coupons-account-reminder'));
+  assert.equal(bubbles[0].textContent,'2');assert.equal(bubbles[0].hidden,false);
+  assert.match(bubbles[0].title,/低于9.1折/);assert.match(bubbles[0].title,/1 张充值券规则待核对/);
+  assert.equal(bubbles[1].textContent,'4');assert.equal(bubbles[2].hidden,true);
+  assert.match(renderedText(get('coupons-accounts').children[0]),/可用 1 张/,get('coupons-feedback').textContent||'existing all-coupon count is retained');
+  assert.equal(dispatched.filter(event=>event.type==='coupon-reminders-changed').length,3);
+  assert.equal(calls.filter(call=>call.url.startsWith('/api/coupons?')).length,3,'no extra wallet reads for rendering bubbles');
+});
+
 test('account badges count usable coupons independently and exclude future or locked coupons',async()=>{
   const accounts=['selected','other','empty','expired'].map((id,index)=>({id,name:id,credential_revision:1,status:id==='expired'?'login_required':'active',phone_masked:'138****000'+index}));
   const {get,calls}=await fixture('counts',{onlyCounts:true,accounts,itemsByAccount:{

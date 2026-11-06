@@ -60,6 +60,9 @@ class AutomaticWednesdayTests(unittest.TestCase):
         self.app=create_app(manager=self.manager,scheduler=self.scheduler,
             app_accounts_provider=lambda:deepcopy(self.pool),app_login_provider=lambda key:None,
             app_credentials_provider=lambda key:{},app_prepare_provider=self.prepare)
+        # Daily check-in dispatch is tested separately; this fixture only models weekly claiming.
+        self.scheduler.daily.pool.shutdown()
+        self.scheduler.daily.pool=Mock()
         self.http=self.app.test_client();self.http.get('/')
         with self.http.session_transaction() as session:self.headers={'X-CSRF-Token':session['csrf']}
     def prepare(self,account):self.prepared.append(account.pool_login_id)

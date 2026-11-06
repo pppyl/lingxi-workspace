@@ -8,6 +8,7 @@ Component license texts are preserved in `_internal/third-party-notices` and `_i
 - PyInstaller (bootloader exception): https://pyinstaller.org/en/stable/license.html
 - Node.js: https://github.com/nodejs/node/blob/main/LICENSE
 - Playwright Core: https://github.com/microsoft/playwright/blob/main/LICENSE
+- Lucide navigation icons (ISC, with Feather portions under MIT): https://github.com/lucide-icons/lucide. The bundled license is in `static/licenses/lucide.txt`.
 
 Build-time versions, download locations, and SHA-256 checksums of the bundled external runtimes are recorded in `build_tools/runtime-lock.json` in the source repository. The release archive checksum is supplied separately as `SHA256SUMS.txt`.
 

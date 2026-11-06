@@ -26,6 +26,7 @@ from coupon_client import (CouponClient, CouponError, ORIGIN, ENTRY, _cbc_encryp
                            _item, _payload, _unpack, RECHARGE_CARD_TYPES, COUPON_PROTOCOLS)
 from coupon_alipay import CouponAlipay, CouponAlipayError
 from app_login import AppLoginSession
+from coupon_reminders import CouponReminders
 
 
 # The official recharge confirmation states payment must finish within 30 minutes.
@@ -119,6 +120,7 @@ class CouponUseManager:
         self.lock, self.operations = RLock(), {}
         self.payment_challenges = {}
         self.data = (storage.load_coupon_use_data() if storage is not None else None) or {}
+        self.reminders = CouponReminders(storage)
         if any(record['state'] == 'submitted' for record in self.data.values()):
             recovered = deepcopy(self.data)
             for record in recovered.values():
@@ -188,6 +190,22 @@ class CouponUseManager:
         self._prune()
         client = CouponClient(lambda: self.credentials(login_id),credential_cache=self.credential_cache,
             app_session_recover=(lambda snapshot:self.app_session_recover(login_id,snapshot)) if self.app_session_recover else None)
+        def observe(items, rows, http, user, current):
+            amount_rule = None
+            operation = SimpleNamespace(client=http, user=user, current=current, kind='recharge')
+            def quote(row):
+                nonlocal amount_rule
+                rule = self._post(operation, '/i/v1/pay/ruleinfo/'+user['number'],
+                    {'payPhoneNo': user['number'], 'pCardNo': row['pCardNo'], 'homeProv': user['province'], 'channel': '0003'})
+                if amount_rule is None:
+                    phone = base64.b64encode(_cbc_encrypt(user['number']).encode()).decode()
+                    rules = self._post(operation, '/i/v1/pay/payrule/'+phone,
+                        {'amountFlag': 1, 'saleFlag': 1, 'enableFlag': 1, 'couponFlag': 1, 'saleQueryType': 2,
+                         'cellNum': user['number'], 'phoneNo': base64.b64encode(user['number'].encode()).decode(),
+                         'enableType': 0, 'provCode': user['province'], 'channel': '11', 'additionFlag': 1})
+                    amount_rule = rules.get('amountRule') or {}
+                return _choices(rule, amount_rule)[0]
+            self.reminders.observe(login_id, items, rows, state=state, quote=quote)
         with self.lock:
             operation = next((item for item in reversed(self.operations.values())
                 if item.login_id == login_id and item.context is not None and item.result is None), None)
@@ -198,7 +216,7 @@ class CouponUseManager:
                 if operation.context is not None and operation.result is None and time.monotonic() < operation.expires:
                     try:
                         result = client.query(state=state, page=page, sort=sort,
-                            wallet_session=(operation.client, operation.user, operation.current))
+                            wallet_session=(operation.client, operation.user, operation.current), observe=observe)
                     except CouponError as error:
                         if error.code != 'COUPON_LOGIN_REQUIRED':raise
                         # An official auth rejection means this OTP session is
@@ -207,7 +225,7 @@ class CouponUseManager:
                         operation.expires = 0
                         recovered = True
         if result is None:
-            result = client.query(state=state, page=page, sort=sort,recover_login=not recovered)
+            result = client.query(state=state, page=page, sort=sort,recover_login=not recovered, observe=observe)
         with self.lock:
             updated = deepcopy(self.data)
             confirmed = {}
