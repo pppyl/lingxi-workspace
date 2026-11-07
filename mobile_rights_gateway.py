@@ -28,6 +28,7 @@ API_PATHS = {
 }
 PARAMETER_NAME = '6daEXCun'
 CONFIG_PATH = DATA_DIR/'mobile-rights/gateway.json'
+BUNDLED_CONFIG_PATH = Path(__file__).with_name('mobile_rights_gateway.json')
 ALPHABET = 'qrcklmDoExthWJiHAp1sVYKU3RFMQw8IGfPO92bvLNj.7zXBaSnu0TC6gy_4Ze5d'
 STANDARD_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
@@ -80,7 +81,7 @@ def _load_config(path, api_path):
     try:
         data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
     except (OSError, UnicodeError, ValueError):
-        raise GatewayError('新青年加密配置无法读取，请检查 xqn_gateway.local.json') from None
+        raise GatewayError(f'移动权益加密配置无法读取，请检查 {Path(path).name} 或更新客户端') from None
     fields = {'parameter_name', 'compression_flag', 'inner_key_hex',
               'config32_hex', 'outer_header_hex', 'record'}
     if not isinstance(data, dict) or type(data.get('schema_version')) is not int:
@@ -89,7 +90,7 @@ def _load_config(path, api_path):
         if set(data) != fields | {'schema_version', 'api_path'} or data.get('api_path') != API_PATH:
             raise GatewayError('新青年加密配置与接口不匹配，请更新本地配置')
         if api_path != API_PATH:
-            raise GatewayError('新青年验证码及兑换加密配置缺失，请更新 xqn_gateway.local.json')
+            raise GatewayError('新青年验证码及兑换加密配置缺失，请更新 mobile-rights/gateway.json 或客户端')
         data = {name: data[name] for name in fields}
     elif data['schema_version'] == 2:
         profiles = data.get('profiles')
@@ -98,7 +99,7 @@ def _load_config(path, api_path):
             raise GatewayError('新青年加密配置与接口不匹配，请更新本地配置')
         data = profiles.get(api_path)
         if not isinstance(data, dict):
-            raise GatewayError('新青年当前接口的加密配置缺失，请更新 xqn_gateway.local.json')
+            raise GatewayError('新青年当前接口的加密配置缺失，请更新 mobile-rights/gateway.json 或客户端')
     else:
         raise GatewayError('新青年加密配置版本无法识别，请更新本地配置')
     if (set(data) != fields or data.get('parameter_name') != PARAMETER_NAME
@@ -134,7 +135,9 @@ def request_params(api_path, params, *, config_path=None, query_prefix=''):
             or any(not isinstance(name, str) or not isinstance(value, str) for name, value in params.items())
             or not re.fullmatch(r'0\.\d{1,24}', params.get('ajax_randomcode', ''))):
         raise GatewayError('新青年加密参数无效，请检查业务参数与随机 Cookie')
-    key, config32, header, record, charset = _load_config(CONFIG_PATH if config_path is None else config_path, api_path)
+    if config_path is None:
+        config_path = CONFIG_PATH if CONFIG_PATH.exists() else BUNDLED_CONFIG_PATH
+    key, config32, header, record, charset = _load_config(config_path, api_path)
     query = query_prefix + urlencode(params)
     request_record = struct.pack('>IBHIQ', record['flags'], record['request_type'],
                                  record['build_id'], record['config_number'], record['sequence'])

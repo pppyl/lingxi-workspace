@@ -29,6 +29,7 @@ def main():
         source = ROOT / (name + '.py')
         if source.exists(): shutil.copy2(source, staging / source.name)
     shutil.copy2(ROOT / 'app_login_public_key.json', staging / 'app_login_public_key.json')
+    shutil.copy2(ROOT / 'mobile_rights_gateway.json', staging / 'mobile_rights_gateway.json')
     for directory in ('static', 'templates', 'recharge/static', 'recharge/templates'):
         shutil.copytree(ROOT / directory, staging / directory, dirs_exist_ok=True)
     stage_activities(ROOT, staging/'activities')

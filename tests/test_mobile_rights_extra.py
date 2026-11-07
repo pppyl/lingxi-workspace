@@ -29,9 +29,24 @@ class ExtraProtocolTests(unittest.TestCase):
         setting=patch('mobile_rights_gateway.CONFIG_PATH',self.config);setting.start();self.addCleanup(setting.stop)
         self.ss=requests.Session();self.addCleanup(self.ss.close);self.ss.cookies.set('WAP_SID','synthetic-auth',domain='wap.gz.10086.cn',path='/waps')
     def test_gateway_output_matches_independent_original_synthetic_vector(self):
-        result=request_params(API_PATH,{'pageName':'index.html','channel':'E004','ajax_randomcode':'0.1234567890123456'})
+        with patch('mobile_rights_gateway.BUNDLED_CONFIG_PATH',Path(self.folder.name)/'not-present.json'):
+            result=request_params(API_PATH,{'pageName':'index.html','channel':'E004','ajax_randomcode':'0.1234567890123456'})
         expected='Rp98IGlqEqqrqGWlrA3ocq9tcaaJkGZAlpEsmrVKmSGRDf7QopgI3lyci6ERIqBPcFYOZpAAWcI._H9rPHBEVI5WMHpPXUe29wKiTrvST3ILOx2H.NbR5N0qB_xvpq8ZIH6V0fDnS4K_vLLqzVX9viAnQsUc9rBsuVCZGezjSPAEqq12Gf96PG'
         self.assertEqual(result,{'6daEXCun':expected})
+    def test_clean_install_uses_bundled_profiles_for_all_five_endpoints(self):
+        with patch('mobile_rights_gateway.CONFIG_PATH',Path(self.folder.name)/'missing/gateway.json'):
+            for api_path in API_PATHS:
+                with self.subTest(api_path=api_path):
+                    result=request_params(api_path,{'ajax_randomcode':'0.123'})
+                    self.assertEqual(set(result),{'6daEXCun'})
+                    self.assertTrue(result['6daEXCun'])
+    def test_invalid_user_override_is_reported_instead_of_silently_replaced(self):
+        self.config.write_text('invalid json',encoding='utf-8')
+        with self.assertRaisesRegex(GatewayError,r'gateway\.json'):
+            request_params(API_PATH,{'ajax_randomcode':'0.123'})
+    def test_explicit_missing_config_is_reported_without_using_bundled_profiles(self):
+        with self.assertRaisesRegex(GatewayError,r'custom\.json'):
+            request_params(API_PATH,{'ajax_randomcode':'0.123'},config_path=Path(self.folder.name)/'custom.json')
     def test_python_page_signature_matches_reference_des_for_member_and_point_pages(self):
         vectors={
             'https://wap.gz.10086.cn/waps/static/activity/pointClaim/index.html':'5aaf0abfefb7e076b8af5ad9906f5586dc02e40de1a8bc8487dab8a3ed8db4bc',

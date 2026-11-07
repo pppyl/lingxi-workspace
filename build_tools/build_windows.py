@@ -85,7 +85,7 @@ def main():
         shutil.rmtree(activity_resources)
     stage_activities(ROOT, activity_resources)
     resources=[(ROOT/'static','static'),(ROOT/'templates','templates'),
-        (ROOT/'app_login_public_key.json','.'),(assets,'desktop_assets'),
+        (ROOT/'app_login_public_key.json','.'),(ROOT/'mobile_rights_gateway.json','.'),(assets,'desktop_assets'),
         (ROOT/'recharge/static','recharge/static'),(ROOT/'recharge/templates','recharge/templates'),
         (ROOT/'recharge/browser_bridge.mjs','recharge'),(ROOT/'recharge/package.json','recharge'),
         (activity_resources,'activities'),

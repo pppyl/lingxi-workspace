@@ -1,0 +1,80 @@
+{
+  "schema_version": 2,
+  "profiles": {
+    "/waps/apRight/initVerticalClassVip": {
+      "parameter_name": "6daEXCun",
+      "compression_flag": 1,
+      "inner_key_hex": "745164e0669b671e019a030305020604",
+      "config32_hex": "13bc7972cbe0f77af14907f8cb5fb13a6b3bb45b177b754f7369d80072043b72",
+      "outer_header_hex": "",
+      "record": {
+        "flags": 51,
+        "request_type": 1,
+        "build_id": 1,
+        "config_number": 2788047745,
+        "sequence": 375618952563698,
+        "charset_hex": ""
+      }
+    },
+    "/waps/rightSell/getSmsBusiCode": {
+      "parameter_name": "6daEXCun",
+      "compression_flag": 1,
+      "inner_key_hex": "517a22d1530e8ab70a9e020005020707",
+      "config32_hex": "1e04e85bc492c9db132e5de3656217375710dd98b196fa3a6aa4f47046706f9a",
+      "outer_header_hex": "",
+      "record": {
+        "flags": 51,
+        "request_type": 1,
+        "build_id": 1,
+        "config_number": 2788047710,
+        "sequence": 3177614541274321,
+        "charset_hex": ""
+      }
+    },
+    "/waps/rightSell/coupunRightOrder": {
+      "parameter_name": "6daEXCun",
+      "compression_flag": 1,
+      "inner_key_hex": "517a22d1530e8ab70a9e020005020707",
+      "config32_hex": "1e04e85bc492c9db132e5de3656217375710dd98b196fa3a6aa4f47046706f9a",
+      "outer_header_hex": "",
+      "record": {
+        "flags": 51,
+        "request_type": 1,
+        "build_id": 1,
+        "config_number": 2788047710,
+        "sequence": 2716583209825640,
+        "charset_hex": ""
+      }
+    },
+    "/waps/pointClaim/initQueryPointClaim": {
+      "parameter_name": "6daEXCun",
+      "inner_key_hex": "517a22d1530e8ab70a9e020005020707",
+      "config32_hex": "1e04e85bc492c9db132e5de3656217375710dd98b196fa3a6aa4f47046706f9a",
+      "outer_header_hex": "",
+      "compression_flag": 1,
+      "record": {
+        "flags": 51,
+        "request_type": 1,
+        "build_id": 1,
+        "config_number": 2788047710,
+        "sequence": 2044755187016075,
+        "charset_hex": ""
+      }
+    },
+    "/waps/pointClaim/conmitPointClaim": {
+      "parameter_name": "6daEXCun",
+      "inner_key_hex": "517a22d1530e8ab70a9e020005020707",
+      "config32_hex": "1e04e85bc492c9db132e5de3656217375710dd98b196fa3a6aa4f47046706f9a",
+      "outer_header_hex": "",
+      "compression_flag": 1,
+      "record": {
+        "flags": 51,
+        "request_type": 1,
+        "build_id": 1,
+        "config_number": 2788047710,
+        "sequence": 3912398153826354,
+        "charset_hex": ""
+      }
+    }
+  }
+}

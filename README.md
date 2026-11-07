@@ -14,7 +14,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 使用已有共享 APP 登录，通过官方 `getYDRZToken` 对应的 `getBigNetToken(sourceId=030011)` 换取短票据，再调用 `/waps/login/leadeonLoginByToken`，并用带官方页面签名／nonce 的 `componant/initQueryLoginInfo` 核对号码。登录 Cookie、nonce、页面 DES 签名和 `6daEXCun` 的 CRC/AES 封装全部为 Python，不执行网页脚本、Node.js 或 WebView 业务。WAP 是独立认证域，不能用 `/activityWeb` 的 bearer 冒充；其有效会话被三项功能复用，加密存入既有凭据库，APP Cookie／revision 更新和重启不会强行重登。短效换票 Cookie 的截止时间不等于 WAP 会话截止时间；只按真正的 WAP 登录 Cookie 期限或明确失效响应恢复。
 
-本机沿用参考项目的纯协议网关配置，位于运行数据目录下的 `mobile-rights/gateway.json`（源码运行时为 `.local/mobile-rights/gateway.json`）。配置仅包含新青年／AI 豆的加密参数，不导入参考项目的账号、token、代理、库存或权益记录；仍按参考项目约定作为私有运行配置忽略，不写进源码或默认打包资源。迁移到其他电脑／独立安卓客户端时需要另行提供这份配置；主权益查询不依赖该文件。一次只读请求最多恢复一次失效会话，查询／短信／领取中的会话保持绑定，请求频繁时不循环重试。
+新青年／AI 豆的纯协议网关配置随源码、Windows 和安卓客户端内置为 `mobile_rights_gateway.json`，新设备无需手动补文件。配置仅包含加密协议参数，不包含账号、Cookie、token、代理、库存或权益记录。需要自定义配置时，可在运行数据目录提供 `mobile-rights/gateway.json`（源码运行时为 `.local/mobile-rights/gateway.json`），优先使用该文件；已有自定义文件无法读取或格式错误时明确报错，不静默覆盖。主权益查询不依赖此配置。一次只读请求最多恢复一次失效会话，查询／短信／领取中的会话保持绑定，请求频繁时不循环重试。
 
 2026-11-06 已用共享账号完成 APP → WAP 免登及三项真实只读查询；具体账号和结果仅保存在被忽略的本机诊断目录，未发送活动短信或提交真实领取。独立测试使用合成账号与人工加密向量，前端预览使用拦截后的示例 API，不操作真实账号。
 
@@ -40,7 +40,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 卡券使用按官方协议类型复用，不按面额逐张适配。不同兑换接口、短信模板及待核实记录的处理见 [卡券兑换协议](COUPON_PROTOCOLS.md)。
 
-直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.8.0-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.8.0-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
+直接从 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.8.1-Windows-x64.exe`，双击运行，可直接转发给其他人。无需安装 Python 或 Node.js，界面在系统默认浏览器中打开；v1.0.1 起不再捆绑 Chrome。周三活动设备组件使用已安装的 Chrome 或 Edge，不读取日常浏览器登录数据。也提供 `LingxiWorkspace-1.8.1-Windows-x64.zip` 文件夹版，完整解压后双击其中的 `LingxiWorkspace.exe`，并保留旁边的 `_internal` 文件夹。
 
 关闭标签页后客户端留在托盘继续执行定时任务，再次运行时复用已打开的页面，右键托盘图标可退出。启动时确认本地页面可访问后才打开浏览器；客户端 Cookie 名称与源码网页服务分离。账号及任务保存在 `%LOCALAPPDATA%\LingxiWorkspace`，与程序文件分离，升级无需搬运账号库。更新前先退出旧版本，首次使用登录自己的手机号。详细说明见 [DESKTOP.md](DESKTOP.md)。
 
@@ -48,7 +48,7 @@ Python + Flask 本地网页，默认地址 http://127.0.0.1:5500/ 。
 
 ## Android 独立版下载
 
-在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.8.0-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
+在 [GitHub Releases](https://github.com/pppyl/lingxi-workspace/releases/latest) 下载 `LingxiWorkspace-1.8.1-Android-arm64.apk`，适用于 Android 7.0+ ARM64 手机。服务、账号和任务在手机本机运行，不需要连接电脑；更新时使用同一签名覆盖安装，保留本机数据。后台任务受系统电池策略影响，详细说明与构建方式见 [ANDROID.md](ANDROID.md)。
 
 ## 页面与使用
 
@@ -263,7 +263,7 @@ node --test tests/test_lingxi_task_model.mjs
 
 ## Android 独立版
 
-下载发布页中的 `LingxiWorkspace-1.8.0-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
+下载发布页中的 `LingxiWorkspace-1.8.1-Android-arm64.apk`，适用 Android 7.0 及以上的 64 位 ARM 手机。安装后直接打开，无需电脑、Python 或 USB。界面通过系统 WebView 展示，Python 服务、SQLite、账号登录和定时任务均在手机内运行；应用仅监听手机回环地址，并由每次启动的随机会话限制访问。
 
 登录凭据使用 Android Keystore 加密，Windows 仍使用 DPAPI。两端各自保存数据，不会把发布者账号打包，也不自动复制电脑的登录态。同一手机号遵循运营商的单点登录规则。付款始终由用户在官方 APP 手动完成。
 
