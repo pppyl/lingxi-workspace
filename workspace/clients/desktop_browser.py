@@ -5,7 +5,7 @@ from ctypes import wintypes
 import threading
 import time
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import ProxyHandler,build_opener
 import webbrowser
 
 WINDOW_TITLE='本地工具台 · 客户端'
@@ -33,10 +33,12 @@ def focus_browser_window():
 
 
 def wait_for_page(url,timeout=15):
+    # This probes our own loopback server, never the user's upstream proxy.
+    opener=build_opener(ProxyHandler({}))
     deadline=time.monotonic()+timeout
     while time.monotonic()<deadline:
         try:
-            with urlopen(url,timeout=1) as response:
+            with opener.open(url,timeout=1) as response:
                 if response.status==200 and response.read(512):return
         except (URLError,OSError):pass
         time.sleep(.05)

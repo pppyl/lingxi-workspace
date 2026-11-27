@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 from workspace.clients.desktop_browser import DefaultBrowserWindow,wait_for_page
 import threading
 import time
@@ -46,6 +46,53 @@ class DesktopRuntimeTests(unittest.TestCase):
             wait_for_page('http://127.0.0.1:'+str(server.server_port),timeout=2)
             self.assertIn(False,seen);self.assertTrue(seen[-1])
         finally:server.shutdown();server.server_close();timer.join()
+
+    def test_startup_loopback_probe_ignores_system_and_environment_proxies(self):
+        local_requests=[];proxy_requests=[]
+        class Page(BaseHTTPRequestHandler):
+            def do_GET(self):
+                local_requests.append(self.path)
+                self.send_response(200);self.end_headers();self.wfile.write(b'workbench ready')
+            def log_message(self,*args):pass
+        class Proxy(BaseHTTPRequestHandler):
+            def do_GET(self):
+                proxy_requests.append(self.path)
+                self.send_response(502);self.end_headers()
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Page)
+        proxy=ThreadingHTTPServer(('127.0.0.1',0),Proxy)
+        for httpd in (server,proxy):threading.Thread(target=httpd.serve_forever,daemon=True).start()
+        proxy_url='http://127.0.0.1:'+str(proxy.server_port)
+        environment={key:value for key,value in os.environ.items() if not key.lower().endswith('_proxy')}
+        environment.update(http_proxy=proxy_url,https_proxy=proxy_url,no_proxy='')
+        try:
+            with patch.dict(os.environ,environment,clear=True),patch('urllib.request.getproxies',return_value={'http':proxy_url}):
+                wait_for_page('http://127.0.0.1:'+str(server.server_port),timeout=.5)
+            self.assertEqual(local_requests,['/'])
+            self.assertEqual(proxy_requests,[])
+        finally:
+            for httpd in (server,proxy):httpd.shutdown();httpd.server_close()
+
+    @unittest.skipUnless(os.name=='nt','Windows desktop controller')
+    def test_existing_client_quit_command_uses_direct_loopback_with_proxy_enabled(self):
+        seen=[]
+        class Control(BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append((self.path,self.headers.get('Authorization')))
+                self.send_response(200);self.end_headers();self.wfile.write(b'{"ok":true}')
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Control)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        environment={key:value for key,value in os.environ.items() if not key.lower().endswith('_proxy')}
+        environment.update(http_proxy='http://127.0.0.1:1',https_proxy='http://127.0.0.1:1',no_proxy='')
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                (Path(folder)/'desktop-instance.json').write_text(json.dumps({'port':server.server_port,'token':'test-control-token'}))
+                result=subprocess.run([sys.executable,'desktop.py','--quit','--data-dir',folder],
+                    cwd=Path(__file__).resolve().parents[1],env=environment,capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(seen,[('/_desktop/quit','Bearer test-control-token')])
+        finally:server.shutdown();server.server_close()
 
     def test_desktop_data_override_does_not_use_developer_accounts(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import secrets
 import threading
-from urllib.request import Request,urlopen
+from urllib.request import Request,ProxyHandler,build_opener
 
 
 def main():
@@ -33,7 +33,7 @@ def main():
         info=json.loads(control_file.read_text('utf-8'))
         request=Request(f'http://127.0.0.1:{int(info["port"])}/_desktop/{command}',data=b'{}',
             headers={'Content-Type':'application/json','Authorization':'Bearer '+info['token']})
-        with urlopen(request,timeout=10) as response:return json.load(response)
+        with build_opener(ProxyHandler({})).open(request,timeout=10) as response:return json.load(response)
 
     if options.quit:
         running_command('quit');return
