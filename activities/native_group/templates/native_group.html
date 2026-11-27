@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
   <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script>
   <script src="/static/mobile.js?v=mobile-1" defer></script>
-  <script src="/activities/native-group/static/native-group.js?v=call-auth-3" defer></script>
+  <script src="/activities/native-group/static/native-group.js?v=call-setup-1" defer></script>
 </head>
 <body class="workspace-app" data-workspace="native-group">
 <main class="page ng-page">
@@ -19,9 +19,9 @@
     <section class="ng-content" id="ng-content" aria-busy="false">
       <section class="ng-panel ng-team"><header class="ng-section-heading"><h2>当前队伍 <span id="ng-team-state" class="ng-muted">请选择账号</span></h2><div class="ng-actions"><button id="ng-invite" class="secondary" disabled>邀请信息</button><button id="ng-quit" class="quiet" disabled>退出队伍</button></div></header>
         <div id="ng-empty"><p id="ng-qualification">查询后显示官方资格及当前队伍。</p><div class="ng-tiers"><button class="ng-tier" data-size="3"><strong>3 人队</strong><span>每人 1 元</span></button><button class="ng-tier" data-size="5"><strong>5 人队</strong><span>每人 3 元</span></button><button class="ng-tier" data-size="10"><strong>10 人队</strong><span>每人 10 元</span></button></div><div class="ng-actions"><button id="ng-create" class="primary" disabled>创建队伍</button><button id="ng-join" class="secondary" disabled>通过邀请加入</button></div></div>
-        <div id="ng-team" hidden><div class="ng-team-overview"><div><strong id="ng-member-count">—</strong><span id="ng-team-size"></span></div><div><strong id="ng-done-count">—</strong><span>位已完成任务</span></div><button id="ng-claim" class="primary" disabled>领取组队奖励</button></div><div class="ng-table-wrap"><table><thead><tr><th>队员</th><th>通话授权</th><th>有效通话</th></tr></thead><tbody id="ng-members"></tbody></table></div></div>
+        <div id="ng-team" hidden><div class="ng-team-overview"><div><strong id="ng-member-count">—</strong><span id="ng-team-size"></span></div><div><strong id="ng-done-count">—</strong><span>位已完成任务</span></div><button id="ng-claim" class="primary" disabled>自动领取组队奖励</button></div><p id="ng-auto-claim" class="ng-note" role="status">已开启自动领取：满员且全员完成任务后，后台自动为各账号领取并核对。</p><div class="ng-table-wrap"><table><thead><tr><th>队员</th><th>通话授权</th><th>有效通话</th></tr></thead><tbody id="ng-members"></tbody></table></div></div>
         <div id="ng-call-panel" class="ng-call-panel" hidden><div><h3>当前账号通话任务</h3><p id="ng-call-summary" class="ng-muted"></p></div><button id="ng-call-open" class="primary" disabled>去拨打电话</button></div>
-        <p class="ng-note">满员且全员完成任务后可领奖，奖品先到先得。每个号码活动期间仅能加入一个队伍。</p>
+        <p class="ng-note">满员且全员完成任务后自动领奖，奖品先到先得。关闭页面后后台继续核对，程序重启后会接续处理。每个号码活动期间仅能加入一个队伍。</p>
       </section>
       <div class="ng-bottom-grid"><section class="ng-panel"><header class="ng-section-heading"><h2>做任务抽奖</h2><span id="ng-draw-count" class="ng-muted">— 次机会</span></header><ul id="ng-tasks" class="ng-list"></ul><div class="ng-actions ng-draw-actions"><button id="ng-prepare" class="secondary" disabled>准备抽奖认证</button><button id="ng-draw" class="primary" disabled>立即抽奖</button></div><p class="ng-note">每天最多抽奖 2 次。真实通话可在上方手动完成并同步，任务与奖品以官方核对结果为准。</p></section>
         <section class="ng-panel"><header class="ng-section-heading"><h2>我的奖品</h2><a href="/coupons">我的卡券 ↗</a></header><ul id="ng-prizes" class="ng-list"><li class="ng-muted">查询后显示官方奖品记录。</li></ul></section></div>
@@ -37,7 +37,7 @@
   <header class="ng-section-heading"><h2 id="ng-call-title">完成通话任务</h2><button type="button" class="quiet" data-close="ng-call-dialog" aria-label="关闭">×</button></header>
   <p id="ng-call-account" class="ng-call-account"></p>
   <p class="ng-note">请用手机浏览器操作，拨打后实际接通至少 5 秒。可选择其他 SIM 卡，通话按套餐计费。</p>
-  <div id="ng-call-authorization" hidden><p class="ng-note">当前号码尚未同步通话授权。将复用已验证的默认电话设备，按本账号同步并核对；准备拨号时也会自动完成。</p><button id="ng-call-authorize" type="button" class="secondary">同步通话授权</button></div>
+  <div id="ng-call-authorization" hidden><p id="ng-call-authorization-info" class="ng-note">当前号码尚未同步通话授权。准备拨号时会自动同步并核对。</p><label id="ng-call-role-confirmation" class="ng-call-confirmation" hidden><input id="ng-call-role-confirmed" type="checkbox"><span>我确认通话手机已经将中国移动设为默认电话，允许自动准备本机参数并同步已有授权</span></label><button id="ng-call-authorize" type="button" class="secondary">同步通话授权</button></div>
   <form id="ng-call-dial-form"><label for="ng-call-number">要拨打的手机号码</label><div class="ng-call-dial-row"><input id="ng-call-number" type="tel" inputmode="numeric" autocomplete="tel" maxlength="11" pattern="1[3-9][0-9]{9}" placeholder="输入 11 位手机号码" required><button id="ng-call-dial" class="primary">去拨打电话</button></div></form>
   <div id="ng-call-return" hidden><a id="ng-call-again">再次打开拨号</a><label class="ng-call-confirmation"><input id="ng-call-connected" type="checkbox"><span>我已真实接通至少 5 秒，确认同步到上述账号</span></label></div>
   <p id="ng-call-message" role="status"></p>

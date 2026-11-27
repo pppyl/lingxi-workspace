@@ -20,6 +20,19 @@ MESSAGES = {'10002': '官方确认该号码不在本次目标范围内。', '100
             '10008': '该号码已经在队伍中。', '10019': '该号码已经参加过组队。'}
 
 
+def award_ready(state):
+    campaign = state.get('campaign') or {}
+    group = campaign.get('userGroupInfo') or {}
+    members = group.get('groupMembers', [])
+    task_status = str(group.get('groupTaskStatus'))
+    return (bool(campaign.get('showGroup')) and str(campaign.get('groupPrizeBtnStatus')) == '1'
+            and group.get('groupSize') in {3, 5, 10} and len(members) == group['groupSize']
+            and task_status.isdigit() and int(task_status) > 0
+            and (state.get('identity') or {}).get('phone') in {row.get('phone') for row in members}
+            and all(str(row.get('authTaskStatus')) == '1' and str(row.get('callTaskStatus')) == '1'
+                    for row in members))
+
+
 def invite_token(value):
     if not isinstance(value, str) or not value.strip() or len(value) > 3000:
         raise CheckinError('请粘贴完整的官方邀请链接或邀请码。', 'INVALID_INVITE', 400)
@@ -163,9 +176,7 @@ class NativeGroupClient(CheckinClient):
                 raise CheckinError('官方仅允许尚未邀请队员的创建人退队。', 'QUIT_UNAVAILABLE', 409)
             path, body = 'quitGroup', {}
         elif kind == 'claim':
-            if (str(campaign.get('groupPrizeBtnStatus')) != '1' or not group.get('groupTaskStatus')
-                    or group.get('groupSize') not in {3, 5, 10}
-                    or len(group.get('groupMembers', [])) < group['groupSize']):
+            if not award_ready(state):
                 raise CheckinError('官方尚未确认全队满员并完成任务。', 'AWARD_NOT_READY', 409)
             path, body = 'redeemGroupAward', {}
         elif kind == 'invite':

@@ -1,14 +1,16 @@
 """Local activity state, account isolation and non-replayed team submissions."""
 from copy import deepcopy
-from datetime import datetime
+from contextlib import nullcontext
+from datetime import datetime, timedelta
 import re
 import secrets
-from threading import Condition, RLock
+from threading import Condition, Event, RLock, Thread
 
 from features.checkin.client import CheckinError
 from recharge.cmcc import SHANGHAI
-from .client import ENTRY
-from .phone_call import sync_confirmed_call, sync_existing_authorization
+from workspace.accounts.storage import LoginStorageError
+from .client import ENTRY, award_ready
+from .phone_call import sync_confirmed_call, sync_existing_authorization, automatic_call_context
 
 SCOPE = 'native-group'
 
@@ -34,12 +36,16 @@ class GroupScheduler:
         self.lock = RLock()
         self.condition = Condition(self.lock)
         self.batch_lock = RLock()
+        self.call_context_lock = RLock()
         self.account_locks, self.running, self.forgotten = {}, set(), set()
         self.stopped = False
+        self.quit, self.wake = Event(), Event()
+        self.thread, self.warning, self.next_checks = None, '', {}
         self.data = (storage.load_activity_data(SCOPE) if storage else None) or {'observations': {}, 'pending': {}, 'records': {},
             'campaign': {'startTime': '2026-11-24 00:00:00', 'endTime': '2026-12-31 23:59:59'}, 'rules': ''}
         self.data.setdefault('batch', None)
         self.data.setdefault('phone_calls', {})
+        self.data.setdefault('auto_claims', {})
 
     def _change(self, edit):
         with self.lock:
@@ -60,15 +66,19 @@ class GroupScheduler:
             return {'accounts': [{**account, 'observation': deepcopy(self.data['observations'].get(account['id'])),
                 'pending': deepcopy(self.data['pending'].get(account['id'])), 'running': account['id'] in self.running,
                 'phone_call': deepcopy(self.data['phone_calls'].get(account['id'])),
+                'auto_claim': deepcopy(self.data['auto_claims'].get(account['id'])),
                 'records': deepcopy(self.data['records'].get(account['id'], []))} for account in self.accounts()],
                 'campaign': self.metadata(), 'rules': self.data['rules'],
-                'call_authorization_available': bool(self.data.get('call_context'))}
+                'call_authorization_available': bool(self.data.get('call_context')),
+                'call_context_auto_setup': True,
+                'auto_claim_enabled': True, 'warning': self.warning}
 
     def _save_observation(self, login_id, observation):
         if login_id in self.forgotten:
             return
         observation = deepcopy(observation)
         observation['checked_at'] = self.now().isoformat()
+        became_ready = award_ready(observation) and not award_ready(self.data['observations'].get(login_id) or {})
         def save(data):
             data['observations'][login_id] = observation
             data['campaign'] = {key: observation['campaign'][key] for key in ('startTime', 'endTime')}
@@ -78,6 +88,9 @@ class GroupScheduler:
             call_done = str(member.get('callTaskStatus')) == '1'
             if call_done and login_id in data['phone_calls']:
                 data['phone_calls'][login_id].update(stage='confirmed', checked_at=observation['checked_at'])
+            if str(observation['campaign'].get('groupPrizeBtnStatus')) in {'2', '3', '4'}:
+                data['auto_claims'][login_id] = {**data['auto_claims'].get(login_id, {}),
+                    'state': 'confirmed', 'checked_at': observation['checked_at'], 'message': '官方已确认组队奖励领取。'}
             pending = data['pending'].get(login_id)
             if pending:
                 kind = pending['kind']
@@ -93,9 +106,47 @@ class GroupScheduler:
                 if confirmed:
                     data['pending'].pop(login_id, None)
         self._change(save)
+        if became_ready:
+            phones = {row['phone'] for row in observation['campaign']['userGroupInfo']['groupMembers']}
+            with self.lock:
+                for key, value in self.data['observations'].items():
+                    if value['identity']['phone'] in phones:
+                        self.next_checks.pop(key, None)
+            self.wake.set()
+
+    def _auto_claim(self, login_id, client, session, snapshot, observation):
+        attempt = self.data['auto_claims'].get(login_id, {})
+        if (self.stopped or not award_ready(observation) or self.data['pending'].get(login_id)
+                or attempt.get('state') == 'failed'):
+            return
+        def before_submit():
+            if self.stopped or login_id in self.forgotten:
+                raise CheckinError('活动或账号已停止。', 'STOPPED', 409)
+            def save(data):
+                at = self.now().isoformat()
+                data['pending'][login_id] = {'kind': 'claim', 'at': at, 'automatic': True}
+                data['auto_claims'][login_id] = {'state': 'submitted', 'at': at, 'message': '正在自动领取组队奖励。'}
+            self._change(save)
+        try:
+            client.operate(session, snapshot, 'claim', observation, before_submit=before_submit)
+            self._save_observation(login_id, client.inspect(session))
+            if self.data['pending'].get(login_id):
+                raise CheckinError('组队奖励已提交，等待官方确认，不会重复领取。', 'RESULT_UNCERTAIN', 409, uncertain=True)
+            self._record(login_id, 'success', '组队奖励已自动领取并获官方确认。')
+        except CheckinError as error:
+            def save(data):
+                if getattr(error, 'definitive_rejection', False):
+                    data['pending'].pop(login_id, None)
+                pending = bool(data['pending'].get(login_id))
+                data['auto_claims'][login_id] = {**data['auto_claims'].get(login_id, {}),
+                    'state': 'pending' if pending else 'failed' if getattr(error, 'definitive_rejection', False) else 'retry',
+                    'code': error.code, 'message': '组队奖励领取结果待核实，请刷新核对。' if pending else clean(error)}
+            self._change(save)
+            self._record(login_id, 'pending' if self.data['pending'].get(login_id) else 'error',
+                         self.data['auto_claims'][login_id]['message'])
 
     def run(self, login_id, kind='refresh', *, size=None, token=None,
-            destination=None, call_id=None, connected=False):
+            destination=None, call_id=None, connected=False, automatic=False, existing_role_confirmed=False):
         account = next((row for row in self.accounts() if row['id'] == login_id), None)
         if not account or account['status'] != 'active':
             raise CheckinError('请选择已登录的有效共享账号。', 'APP_LOGIN_REQUIRED', 401)
@@ -123,6 +174,7 @@ class GroupScheduler:
                         if not self.data['rules']:
                             rules = client.rules()
                             self._change(lambda data: data.update(rules=rules))
+                        self._auto_claim(login_id, client, session, snapshot, observation)
                         return self.status()
                     if kind in {'call_prepare', 'call_confirm', 'call_authorize'}:
                         group = observation['campaign'].get('userGroupInfo') or {}
@@ -131,27 +183,42 @@ class GroupScheduler:
                         if not member:
                             raise CheckinError('请先加入队伍，再准备本账号的通话任务。', 'CALL_TEAM_REQUIRED', 409)
                         if kind != 'call_authorize' and str(member.get('callTaskStatus')) == '1':
+                            self._auto_claim(login_id, client, session, snapshot, observation)
                             return self.status()
                         if str(member.get('authTaskStatus')) != '1':
                             if self.data['pending'].get(login_id):
                                 raise CheckinError('上次提交结果待核实，请先刷新官方进度。', 'RESULT_UNCERTAIN', 409, uncertain=True)
-                            if kind == 'call_confirm' or not self.data.get('call_context'):
+                            if kind == 'call_confirm':
                                 raise CheckinError('本账号通话授权尚未获官方确认，请先同步既有授权并核对。', 'CALL_AUTH_REQUIRED', 409)
-                            def before_authorization():
-                                client._current(snapshot)
-                                if self.stopped or login_id in self.forgotten:
-                                    raise CheckinError('活动或账号已停止。', 'STOPPED', 409)
-                                self._change(lambda data: data['pending'].__setitem__(login_id,
-                                    {'kind': 'call_authorize', 'at': self.now().isoformat()}))
-                            sync_existing_authorization(snapshot, self.data['call_context'],
-                                                        before_submit=before_authorization)
+                            with (self.call_context_lock if not self.data.get('call_context') else nullcontext()):
+                                context = self.data.get('call_context')
+                                generated = not context
+                                if generated:
+                                    if existing_role_confirmed is not True:
+                                        raise CheckinError('首次使用请确认通话手机已将中国移动设为默认电话，程序将自动配置本机参数。',
+                                                           'CALL_AUTH_REQUIRED', 409)
+                                    context = automatic_call_context(snapshot)
+                                def before_authorization():
+                                    client._current(snapshot)
+                                    if self.stopped or login_id in self.forgotten:
+                                        raise CheckinError('活动或账号已停止。', 'STOPPED', 409)
+                                    def save(data):
+                                        at = self.now().isoformat()
+                                        data['pending'][login_id] = {'kind': 'call_authorize', 'at': at}
+                                        if generated:
+                                            data['call_context'] = {**context, 'confirmed_at': at}
+                                    self._change(save)
+                                sync_existing_authorization(snapshot, context, before_submit=before_authorization)
                             observation = client.inspect(session)
                             self._save_observation(login_id, observation)
                             if self.data['pending'].get(login_id):
                                 raise CheckinError('已同步既有授权，官方进度尚待确认，请刷新核对。', 'RESULT_UNCERTAIN', 409, uncertain=True)
                             self._record(login_id, 'success', '本账号既有通话授权已同步并获官方确认。')
                         if kind == 'call_authorize':
+                            self._auto_claim(login_id, client, session, snapshot, observation)
                             return self.status()
+                    if kind == 'claim' and str(observation['campaign'].get('groupPrizeBtnStatus')) in {'2', '3', '4'}:
+                        return self.status()
                     if self.data['pending'].get(login_id):
                         raise CheckinError('上次提交结果待核实，请先刷新官方进度。', 'RESULT_UNCERTAIN', 409, uncertain=True)
                     if kind == 'prepare':
@@ -179,6 +246,9 @@ class GroupScheduler:
                                 prize_count=len(observation['prizes']))
                         def save(data):
                             data['pending'][login_id] = pending
+                            if kind == 'claim':
+                                data['auto_claims'][login_id] = {'state': 'submitted', 'at': pending['at'],
+                                                               'message': '正在领取组队奖励。'}
                             if kind == 'call_confirm':
                                 data['phone_calls'][login_id].update(stage='submitted',
                                     confirmed_at=pending['at'], confirmation_source='operator_real_call')
@@ -198,6 +268,7 @@ class GroupScheduler:
                     self._record(login_id, 'success', {'create': '创建队伍已核对', 'join': '加入队伍已核对',
                         'quit': '退出队伍已核对', 'claim': '组队奖励已核对', 'draw': '本次抽奖次数及官方奖品记录已核对',
                         'call_confirm': '操作者确认真实通话，通话任务已获官方确认。'}[kind])
+                    self._auto_claim(login_id, client, session, snapshot, self.data['observations'][login_id])
                     return self.status()
             except CheckinError as error:
                 if getattr(error, 'definitive_rejection', False):
@@ -205,9 +276,14 @@ class GroupScheduler:
                         data['pending'].pop(login_id, None)
                         if kind == 'call_confirm':
                             data['phone_calls'][login_id]['stage'] = 'rejected'
+                        if kind == 'claim':
+                            data['auto_claims'][login_id].update(state='failed', code=error.code, message=clean(error))
                     self._change(reject)
                 elif self.data['pending'].get(login_id) and not error.uncertain:
                     error = CheckinError('提交结果尚待核实，请刷新官方进度。', 'RESULT_UNCERTAIN', 409, uncertain=True)
+                if automatic and (error.status == 401 or error.code in {'10002', 'APP_SSO_HTTP', 'FAILED'}):
+                    self._change(lambda data: data['auto_claims'].__setitem__(login_id,
+                        {'state': 'paused', 'date': self.now().date().isoformat(), 'code': error.code, 'message': clean(error)}))
                 self._record(login_id, 'pending' if error.uncertain else 'error', clean(error))
                 raise error
             finally:
@@ -319,15 +395,67 @@ class GroupScheduler:
     def forget(self, login_id):
         self.forgotten.add(login_id)
         def remove(data):
-            for key in ('observations', 'pending', 'records', 'phone_calls'):
+            for key in ('observations', 'pending', 'records', 'phone_calls', 'auto_claims'):
                 data[key].pop(login_id, None)
         self._change(remove)
+        self.next_checks.pop(login_id, None)
+
+    def tick(self):
+        if self.stopped or self.metadata()['ended']:
+            return
+        now = self.now()
+        for account in self.accounts():
+            login_id = account['id']
+            with self.lock:
+                observation = self.data['observations'].get(login_id) or {}
+                campaign = observation.get('campaign') or {}
+                attempt = self.data['auto_claims'].get(login_id, {})
+                pending_claim = self.data['pending'].get(login_id, {}).get('kind') == 'claim'
+                if (account['status'] != 'active' or login_id in self.running or login_id in self.forgotten
+                        or not campaign.get('showGroup') or not campaign.get('userGroupInfo')
+                        or str(campaign.get('groupPrizeBtnStatus')) in {'2', '3', '4'}
+                        or str(campaign.get('groupPrizeBtnStatus')) == '0' and not pending_claim
+                        or attempt.get('state') in {'failed', 'confirmed'}
+                        or attempt.get('state') == 'paused' and attempt.get('date') == now.date().isoformat()
+                        or self.next_checks.get(login_id, now) > now):
+                    continue
+                self.next_checks[login_id] = now + timedelta(minutes=1)
+            try:
+                self.run(login_id, automatic=True)
+            except CheckinError:
+                continue
+
+    def login_restored(self, login_id):
+        attempt = self.data['auto_claims'].get(login_id, {})
+        if (attempt.get('state') == 'paused' and attempt.get('code') != '10002'
+                or attempt.get('state') == 'failed' and attempt.get('code') in {'APP_LOGIN_REQUIRED', 'ACTIVITY_LOGIN_REQUIRED'}):
+            self._change(lambda data: data['auto_claims'].pop(login_id, None))
+        with self.lock:
+            self.next_checks.pop(login_id, None)
+        self.wake.set()
 
     def start(self):
+        if self.thread is not None and self.thread.is_alive():
+            return
         self.stopped = False
+        self.quit.clear()
+        def loop():
+            while not self.quit.is_set():
+                self.wake.clear()
+                try:
+                    self.tick()
+                except LoginStorageError as error:
+                    self.warning = clean(error)
+                self.wake.wait(60)
+        self.thread = Thread(target=loop, name=SCOPE+'-awards', daemon=True)
+        self.thread.start()
 
     def shutdown(self, wait=True):
+        self.quit.set()
+        self.wake.set()
         with self.condition:
             self.stopped = True
             if wait:
                 self.condition.wait_for(lambda: not self.running)
+        if wait and self.thread is not None:
+            self.thread.join(timeout=2)

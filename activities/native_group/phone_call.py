@@ -6,6 +6,21 @@ LAST_CALL_PATH = '/biz-orange/DN/call/cson/appinfo/lastCall'
 CALL_GRANT_PATH = '/biz-orange/DN/call/cson/appinfo/isCallGrant'
 
 
+def automatic_call_context(snapshot):
+    """Prepare protocol parameters; the caller must separately confirm an existing real role."""
+    if snapshot.get('primary_status') == 'login_required':
+        raise CheckinError('自动配置需要有效 APP 登录，请先在账号管理恢复登录。', 'APP_LOGIN_REQUIRED', 401)
+    flow = AppLoginSession.from_credentials(snapshot)
+    if not (snapshot.get('app_context') or {}).get('device_id') or not flow.xk or flow.xk == 'null':
+        try:
+            flow.initialize()
+        except AppLoginError as error:
+            raise CheckinError('官方设备参数初始化未完成，请稍后主动重试。', 'CALL_DEVICE_INIT_FAILED', 409) from error
+    return {'role_holder': 'com.greenpoint.android.mc10086.activity',
+            'device_id': flow.device_id, 'xk': flow.xk,
+            'source': 'operator-confirmed-existing-role/automatic-app-device-parameters'}
+
+
 class CallSession(AppLoginSession):
     def envelope(self, body, *, login_component=False):
         value = super().envelope(body, login_component=login_component)
@@ -14,8 +29,8 @@ class CallSession(AppLoginSession):
         return value
 
 
-def sync_existing_authorization(snapshot, device_context, *, before_submit):
-    """Sync a confirmed existing dialer role using this account's own identity."""
+def verified_call_session(snapshot, device_context):
+    """Verify this account in an already authorized device context; never grant a role."""
     if snapshot.get('primary_status') == 'login_required':
         raise CheckinError('同步通话授权需要有效 APP 登录，请先在账号管理恢复登录。', 'APP_LOGIN_REQUIRED', 401)
     if (not device_context or device_context.get('role_holder') != 'com.greenpoint.android.mc10086.activity'
@@ -30,6 +45,12 @@ def sync_existing_authorization(snapshot, device_context, *, before_submit):
         raise CheckinError('授权设备会话核验失败，请稍后主动重试。', 'CALL_DEVICE_SESSION_FAILED', 409) from error
     if str(result.get('retCode')) != '000000' or session.cookie != snapshot['cookie']:
         raise CheckinError('当前账号未通过授权设备会话核验，请恢复登录后重试。', 'CALL_DEVICE_SESSION_FAILED', 409)
+    return session
+
+
+def sync_existing_authorization(snapshot, device_context, *, before_submit):
+    """Sync a confirmed existing dialer role using this account's own identity."""
+    session = verified_call_session(snapshot, device_context)
     before_submit()
     try:
         _, result, _ = session.call(CALL_GRANT_PATH, {'cellNum': snapshot['phone'], 'isCallGrant': True})

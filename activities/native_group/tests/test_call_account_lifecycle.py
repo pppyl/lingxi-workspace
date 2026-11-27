@@ -171,6 +171,105 @@ class CallAccountLifecycleTests(unittest.TestCase):
             ('13800138000', CALL_GRANT_PATH): 1, ('13900138001', REFRESH_PATH): 1,
             ('13900138001', CALL_GRANT_PATH): 1}))
 
+    def test_clean_computer_prepares_its_own_context_without_importing_developer_data(self):
+        self.add_account('fresh', '13800138000')
+        self.device = {**self.snapshots['fresh']['app_context'],
+                       'role_holder': 'com.greenpoint.android.mc10086.activity'}
+        original = deepcopy(self.snapshots['fresh'])
+        browser, controller = self.start_client()
+        status = browser.get('/api/native-group/status').get_json()
+        self.assertTrue(status['call_context_auto_setup'])
+        self.assertFalse(status['call_authorization_available'])
+        response = self.prepare(browser, 'fresh')
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()['code'], 'CALL_AUTH_REQUIRED')
+        self.assertFalse(self.requests)
+        response = browser.post('/api/native-group/run', json={'login_id': 'fresh', 'kind': 'call_prepare',
+            'destination': '13800138999', 'confirmed': True, 'existing_role_confirmed': True})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        status = response.get_json()
+        self.assertTrue(status['call_authorization_available'])
+        self.assertEqual(status['accounts'][0]['phone_call']['stage'], 'prepared')
+        self.assertNotIn('call_context', status)
+        saved = self.storage.load_activity_data('native-group')['call_context']
+        self.assertEqual(saved['device_id'], self.device['device_id'])
+        self.assertEqual(saved['xk'], self.device['xk'])
+        self.assertFalse({'cookie', 'phone', 'refreshToken'} & saved.keys())
+        self.assertEqual(self.snapshots['fresh'], original)
+        controller.stop()
+
+        browser, _ = self.start_client()
+        self.add_account('next', '13900138001')
+        response = self.prepare(browser, 'next')
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(Counter(self.requests), Counter({('13800138000', REFRESH_PATH): 1,
+            ('13800138000', CALL_GRANT_PATH): 1, ('13900138001', REFRESH_PATH): 1,
+            ('13900138001', CALL_GRANT_PATH): 1}))
+
+    def test_clean_setup_with_unknown_authorization_result_does_not_initialize_or_report_twice(self):
+        self.add_account('fresh', '13800138000')
+        self.device = {**self.snapshots['fresh']['app_context'],
+                       'role_holder': 'com.greenpoint.android.mc10086.activity'}
+        browser, controller = self.start_client()
+        self.lose_grant_response = True
+        response = browser.post('/api/native-group/run', json={'login_id': 'fresh', 'kind': 'call_prepare',
+            'destination': '13800138999', 'confirmed': True, 'existing_role_confirmed': True})
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.get_json()['uncertain'])
+        self.assertTrue(self.storage.load_activity_data('native-group')['call_context'])
+        controller.stop()
+        browser, _ = self.start_client()
+        response = self.prepare(browser, 'fresh')
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertIsNone(response.get_json()['accounts'][0]['pending'])
+        self.assertEqual(self.requests, [('13800138000', REFRESH_PATH), ('13800138000', CALL_GRANT_PATH)])
+
+    def test_clean_setup_rejected_by_session_verification_does_not_save_context_or_send_authorization(self):
+        self.add_account('fresh', '13800138000')
+        browser, _ = self.start_client()
+        with patch.object(CallSession, 'call', return_value=(200, {'retCode': '410000'}, {})) as send:
+            response = browser.post('/api/native-group/run', json={'login_id': 'fresh', 'kind': 'call_prepare',
+                'destination': '13800138999', 'confirmed': True, 'existing_role_confirmed': True})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()['code'], 'CALL_DEVICE_SESSION_FAILED')
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(send.call_args.args[0], REFRESH_PATH)
+        state = self.storage.load_activity_data('native-group')
+        self.assertNotIn('call_context', state)
+        self.assertFalse(state['pending'])
+        self.assertFalse(state['phone_calls'])
+
+    def test_two_cold_account_preparations_only_generate_one_shared_local_context(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from activities.native_group.phone_call import automatic_call_context
+        self.add_account('a', '13800138000')
+        self.add_account('b', '13900138001')
+        self.device = {**self.snapshots['a']['app_context'],
+                       'role_holder': 'com.greenpoint.android.mc10086.activity'}
+        browser, _ = self.start_client()
+        entered, release = Event(), Event()
+        def generate(snapshot):
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return automatic_call_context(snapshot)
+        def prepare(key):
+            with browser.application.test_client() as client:
+                result = client.post('/api/native-group/run', json={'login_id': key, 'kind': 'call_prepare',
+                    'destination': '13800138999', 'confirmed': True, 'existing_role_confirmed': True})
+                self.assertEqual(result.status_code, 200, result.get_json())
+        with patch('activities.native_group.scheduler.automatic_call_context', side_effect=generate) as setup:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first = executor.submit(prepare, 'a')
+                self.assertTrue(entered.wait(1))
+                second = executor.submit(prepare, 'b')
+                release.set()
+                first.result()
+                second.result()
+            setup.assert_called_once()
+        self.assertEqual(Counter(phone for phone, path in self.requests if path == CALL_GRANT_PATH),
+                         Counter({'13800138000': 1, '13900138001': 1}))
+
 
 if __name__ == '__main__':
     unittest.main()

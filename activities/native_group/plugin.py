@@ -78,7 +78,8 @@ def register(app, credentials, accounts, storage):
             raise CheckinError('请确认当前账号和操作。', 'CONFIRM_REQUIRED', 400)
         return jsonify(controller.scheduler.run(value['login_id'], value['kind'],
             size=value.get('size'), token=value.get('invitation'), destination=value.get('destination'),
-            call_id=value.get('call_id'), connected=value.get('connected')))
+            call_id=value.get('call_id'), connected=value.get('connected'),
+            existing_role_confirmed=value.get('existing_role_confirmed')))
 
     @blueprint.post('/api/native-group/plan')
     def plan():

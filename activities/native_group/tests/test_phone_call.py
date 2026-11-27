@@ -4,12 +4,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from activities.native_group.phone_call import (CallSession, LAST_CALL_PATH, CALL_GRANT_PATH,
-                                                sync_confirmed_call, sync_existing_authorization)
+                                                sync_confirmed_call, sync_existing_authorization, automatic_call_context)
 from activities.native_group.scheduler import GroupScheduler
 from activities.native_group.tests.test_native_group import Storage, observation
 from features.checkin.client import CheckinError
 from recharge.cmcc import SHANGHAI
-from workspace.accounts.login import AppLoginError, REFRESH_PATH
+from workspace.accounts.login import AppLoginError, AppLoginSession, REFRESH_PATH
 
 
 def call_observation(*, done=False, authorized=True):
@@ -234,6 +234,35 @@ class ManualPhoneCallTests(unittest.TestCase):
 
 
 class CallSyncProtocolTests(unittest.TestCase):
+    def test_automatic_context_reuses_existing_parameters_without_initializing_or_rotating_identity(self):
+        from copy import deepcopy
+        snapshot = {'phone': '13800138000', 'cookie': 'JSESSIONID=own',
+                    'app_context': {'device_id': 'own-device', 'xk': 'own-key', 'refreshToken': 'own-refresh'}}
+        before = deepcopy(snapshot)
+        with patch.object(AppLoginSession, 'initialize') as initialize:
+            context = automatic_call_context(snapshot)
+        initialize.assert_not_called()
+        self.assertEqual((context['device_id'], context['xk']), ('own-device', 'own-key'))
+        self.assertEqual(snapshot, before)
+        self.assertFalse({'cookie', 'phone', 'refreshToken'} & context.keys())
+
+    def test_automatic_context_initializes_missing_parameters_once_without_overwriting_primary_credentials(self):
+        snapshot = {'phone': '13800138000', 'cookie': 'JSESSIONID=own', 'app_context': {}}
+        flow = AppLoginSession.from_credentials(snapshot)
+        flow.initialize = Mock(side_effect=lambda: setattr(flow, 'xk', 'official-device-key'))
+        with patch.object(AppLoginSession, 'from_credentials', return_value=flow):
+            context = automatic_call_context(snapshot)
+        flow.initialize.assert_called_once()
+        self.assertEqual(context['xk'], 'official-device-key')
+        self.assertEqual(snapshot['app_context'], {})
+        self.assertEqual(snapshot['cookie'], 'JSESSIONID=own')
+
+    def test_expired_identity_does_not_initialize_for_automatic_context(self):
+        with patch.object(AppLoginSession, 'from_credentials') as create:
+            with self.assertRaises(CheckinError):
+                automatic_call_context({'primary_status': 'login_required'})
+        create.assert_not_called()
+
     def test_authorization_reuses_real_device_but_keeps_current_accounts_identity(self):
         from copy import deepcopy
         snapshot = {'phone': '13800138000', 'cookie': 'JSESSIONID=current-account',

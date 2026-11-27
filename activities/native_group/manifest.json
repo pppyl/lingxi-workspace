@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "id": "native-group",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "title": "APP 通话组队",
   "module": "activities.native_group.plugin",
   "home": "/native-group",
