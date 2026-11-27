@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>APP 通话组队 · 本地工具台</title><link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/static/portal.css"><link rel="stylesheet" href="/static/workspace.css">
+  <link rel="stylesheet" href="/activities/native-group/static/native-group.css">
+  <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
+  <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script>
+  <script src="/static/mobile.js?v=mobile-1" defer></script>
+  <script src="/activities/native-group/static/native-group.js?v=call-auth-3" defer></script>
+</head>
+<body class="workspace-app" data-workspace="native-group">
+<main class="page ng-page">
+  <header class="ng-heading"><div><h1>APP 通话组队</h1><p id="ng-period" class="ng-muted"></p></div><div class="ng-actions"><button class="secondary" data-account-window>账号管理</button><button class="secondary" id="ng-refresh">刷新当前账号</button><button class="primary" id="ng-plan">按号池预览组队</button></div></header>
+  <p id="ng-feedback" role="status" hidden></p>
+  <div class="ng-layout">
+    <aside class="ng-panel ng-accounts"><h2>共享账号 <span id="ng-count"></span></h2><div id="ng-accounts"></div></aside>
+    <section class="ng-content" id="ng-content" aria-busy="false">
+      <section class="ng-panel ng-team"><header class="ng-section-heading"><h2>当前队伍 <span id="ng-team-state" class="ng-muted">请选择账号</span></h2><div class="ng-actions"><button id="ng-invite" class="secondary" disabled>邀请信息</button><button id="ng-quit" class="quiet" disabled>退出队伍</button></div></header>
+        <div id="ng-empty"><p id="ng-qualification">查询后显示官方资格及当前队伍。</p><div class="ng-tiers"><button class="ng-tier" data-size="3"><strong>3 人队</strong><span>每人 1 元</span></button><button class="ng-tier" data-size="5"><strong>5 人队</strong><span>每人 3 元</span></button><button class="ng-tier" data-size="10"><strong>10 人队</strong><span>每人 10 元</span></button></div><div class="ng-actions"><button id="ng-create" class="primary" disabled>创建队伍</button><button id="ng-join" class="secondary" disabled>通过邀请加入</button></div></div>
+        <div id="ng-team" hidden><div class="ng-team-overview"><div><strong id="ng-member-count">—</strong><span id="ng-team-size"></span></div><div><strong id="ng-done-count">—</strong><span>位已完成任务</span></div><button id="ng-claim" class="primary" disabled>领取组队奖励</button></div><div class="ng-table-wrap"><table><thead><tr><th>队员</th><th>通话授权</th><th>有效通话</th></tr></thead><tbody id="ng-members"></tbody></table></div></div>
+        <div id="ng-call-panel" class="ng-call-panel" hidden><div><h3>当前账号通话任务</h3><p id="ng-call-summary" class="ng-muted"></p></div><button id="ng-call-open" class="primary" disabled>去拨打电话</button></div>
+        <p class="ng-note">满员且全员完成任务后可领奖，奖品先到先得。每个号码活动期间仅能加入一个队伍。</p>
+      </section>
+      <div class="ng-bottom-grid"><section class="ng-panel"><header class="ng-section-heading"><h2>做任务抽奖</h2><span id="ng-draw-count" class="ng-muted">— 次机会</span></header><ul id="ng-tasks" class="ng-list"></ul><div class="ng-actions ng-draw-actions"><button id="ng-prepare" class="secondary" disabled>准备抽奖认证</button><button id="ng-draw" class="primary" disabled>立即抽奖</button></div><p class="ng-note">每天最多抽奖 2 次。真实通话可在上方手动完成并同步，任务与奖品以官方核对结果为准。</p></section>
+        <section class="ng-panel"><header class="ng-section-heading"><h2>我的奖品</h2><a href="/coupons">我的卡券 ↗</a></header><ul id="ng-prizes" class="ng-list"><li class="ng-muted">查询后显示官方奖品记录。</li></ul></section></div>
+      <details class="ng-panel ng-details"><summary>活动规则与参与条件</summary><p class="ng-note">安卓须首次设置中国移动 APP 为默认通话应用，并在入队后完成不少于 5 秒的有效通话。iOS 须完成端内有效通话。通话按现行套餐计费。</p><div id="ng-rules" class="ng-rules">选择账号查询后读取官方规则。</div></details>
+      <details class="ng-panel ng-details"><summary>操作记录</summary><ul id="ng-records" class="ng-list"></ul></details>
+      <p id="ng-checked" class="ng-muted"></p>
+    </section>
+  </div>
+</main>
+<dialog id="ng-confirm"><form id="ng-confirm-form"><header class="ng-section-heading"><h2 id="ng-confirm-title">确认操作</h2><button type="button" class="quiet" data-close="ng-confirm" aria-label="关闭">×</button></header><p id="ng-confirm-text"></p><label id="ng-invitation-label" hidden>官方邀请链接或邀请码<input id="ng-invitation" autocomplete="off"></label><div id="ng-plan-preview"></div><p id="ng-confirm-error" role="alert"></p><footer class="ng-actions"><button type="button" class="secondary" data-close="ng-confirm">取消</button><button class="primary" id="ng-confirm-submit">确认提交</button></footer></form></dialog>
+<dialog id="ng-share"><header class="ng-section-heading"><h2>邀请队员</h2><button type="button" class="quiet" data-close="ng-share" aria-label="关闭">×</button></header><p id="ng-share-title"></p><label>官方邀请链接<input id="ng-share-url" readonly></label><button id="ng-copy" class="secondary">复制邀请链接</button><p id="ng-copy-status" role="status"></p></dialog>
+<dialog id="ng-call-dialog" aria-labelledby="ng-call-title">
+  <header class="ng-section-heading"><h2 id="ng-call-title">完成通话任务</h2><button type="button" class="quiet" data-close="ng-call-dialog" aria-label="关闭">×</button></header>
+  <p id="ng-call-account" class="ng-call-account"></p>
+  <p class="ng-note">请用手机浏览器操作，拨打后实际接通至少 5 秒。可选择其他 SIM 卡，通话按套餐计费。</p>
+  <div id="ng-call-authorization" hidden><p class="ng-note">当前号码尚未同步通话授权。将复用已验证的默认电话设备，按本账号同步并核对；准备拨号时也会自动完成。</p><button id="ng-call-authorize" type="button" class="secondary">同步通话授权</button></div>
+  <form id="ng-call-dial-form"><label for="ng-call-number">要拨打的手机号码</label><div class="ng-call-dial-row"><input id="ng-call-number" type="tel" inputmode="numeric" autocomplete="tel" maxlength="11" pattern="1[3-9][0-9]{9}" placeholder="输入 11 位手机号码" required><button id="ng-call-dial" class="primary">去拨打电话</button></div></form>
+  <div id="ng-call-return" hidden><a id="ng-call-again">再次打开拨号</a><label class="ng-call-confirmation"><input id="ng-call-connected" type="checkbox"><span>我已真实接通至少 5 秒，确认同步到上述账号</span></label></div>
+  <p id="ng-call-message" role="status"></p>
+  <footer class="ng-actions"><button id="ng-call-refresh" type="button" class="secondary">核对官方进度</button><button id="ng-call-sync" type="button" class="primary" disabled>同步并核对</button></footer>
+</dialog>
+</body>
+</html>

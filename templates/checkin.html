@@ -169,10 +169,10 @@
     <p id="partner-feedback" class="partner-feedback" role="status" aria-live="polite"></p>
     <section id="partner-qr" class="partner-qr" hidden><h3 id="partner-qr-title"></h3><img id="partner-qr-image" alt="官方扫码登录二维码"><p id="partner-qr-status" role="status">等待扫码确认</p><button id="partner-qr-cancel" class="secondary" type="button">结束本次扫码</button></section>
     <details id="partner-import"><summary>手动更新登录资料</summary><p class="partner-login-note">支持当前合作方的 Cookie、Cookie JSON 或 Netscape 文件。也可恢复本人已导出的登录资料；先校验身份，再替换旧会话。请勿在聊天中发送凭据。</p>
-      <label>合作方<select id="partner-import-service"><option value="baidu-map">百度地图</option><option value="taobao">淘宝 / 菜鸟</option></select></label>
+      <label>合作方<select id="partner-import-service"><option value="baidu-map">百度地图</option><option value="taobao">淘宝 / 菜鸟</option><option value="kuaishou">快手极速版</option></select></label>
       <label>登录资料<textarea id="partner-import-text" rows="5" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴当前合作方的 Cookie 或 JSON"></textarea></label>
       <div class="partner-import-actions"><input id="partner-import-file" type="file" accept=".json,.txt"><button id="partner-import-submit" class="primary" type="button">验证并更新</button></div>
-      <p class="partner-login-note">首次配置百度地图的 JSON 还需包含本人 phone_info（cuid、sv）；已有资料会在后续扫码更新时复用。</p>
+      <p class="partner-login-note">百度地图首次需包含本人 phone_info（cuid、sv）；快手需导入完整 JSON 登录资料。资料验证通过后才会更新，任务运行无需连接手机。</p>
     </details>
     <div class="partner-data-directory"><span>统一账号数据目录</span><code id="partner-data-directory">正在读取…</code><button id="partner-copy-directory" class="quiet" type="button">复制路径</button></div>
   </div>

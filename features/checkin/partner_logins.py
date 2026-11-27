@@ -13,11 +13,13 @@ from workspace.accounts.credentials import CredentialCache
 from workspace.http_transport import requests
 from .baidu_map import CheckinBaiduMap,SCOPE as BAIDU_SCOPE,HOME,ENTRY as BAIDU_ENTRY,USER_AGENT
 from .taobao import CheckinTaobao,SCOPE as TAOBAO_SCOPE,ENTRY as TAOBAO_ENTRY
+from .kuaishou import CheckinKuaishou, SCOPE as KUAISHOU_SCOPE, LOGIN_FIELDS as KUAISHOU_FIELDS, normalize_login, QUERY as KUAISHOU_QUERY
 from .partner_qr import PartnerQr
 from .client import CheckinError
 
 SERVICES={'baidu-map':{'title':'百度地图','scope':BAIDU_SCOPE,'expiry':('BDUSS','BDUSS_BFESS'),'domains':('baidu.com',)},
-          'taobao':{'title':'淘宝 / 菜鸟','scope':TAOBAO_SCOPE,'expiry':('cookie2','sgcookie'),'domains':('taobao.com','tmall.com')}}
+          'taobao':{'title':'淘宝 / 菜鸟','scope':TAOBAO_SCOPE,'expiry':('cookie2','sgcookie'),'domains':('taobao.com','tmall.com')},
+          'kuaishou':{'title':'快手极速版','scope':KUAISHOU_SCOPE,'expiry':(),'domains':('kuaishou.com',)}}
 PROFILE_KEY='partner-login-profiles'
 FLOW_RETENTION_SECONDS=900  # Local unfinished-dialog cleanup, not partner credential validity.
 
@@ -30,8 +32,10 @@ def parse_import(text,service):
         try:value=json.loads(text)
         except ValueError as error:raise CheckinError('JSON 格式不正确。','INVALID_IMPORT',400) from error
         if isinstance(value,dict):
-            metadata={k:value[k] for k in ('uid','phone_info') if k in value}
+            keys=KUAISHOU_FIELDS if service=='kuaishou' else ('uid','phone_info')
+            metadata={k:value[k] for k in keys if k in value}
             cookies=value.get('cookies')
+            if service=='kuaishou':cookies=value.get('cookies',[])
         else:cookies=value
         if not isinstance(cookies,list):raise CheckinError('JSON 必须包含 cookies 数组。','INVALID_IMPORT',400)
     elif '\t' in text:
@@ -91,7 +95,8 @@ class PartnerLogins:
         if not isinstance(service,str) or service not in SERVICES:raise CheckinError('请选择支持的合作方。','INVALID_SERVICE',400)
         snapshot=self.snapshot(login_id);saved=self.cache.peek(SERVICES[service]['scope'],snapshot)
         with self.lock:profile=deepcopy(self.profiles.get(login_id+':'+service,{}))
-        metadata={k:saved['data'][k] for k in ('uid','phone_info') if k in saved['data']} if saved else {}
+        keys=KUAISHOU_FIELDS if service=='kuaishou' else ('uid','phone_info')
+        metadata={k:saved['data'][k] for k in keys if k in saved['data']} if saved else {}
         metadata.update({k:profile[k] for k in ('uid','phone_info') if k in profile})
         return snapshot,saved,metadata
 
@@ -117,13 +122,14 @@ class PartnerLogins:
                 'expires_at':saved['expires_at'] if saved else None,'checked_at':profile.get('checked_at'),
                 'uid_hint':'****'+str(profile['uid'])[-4:] if profile.get('uid') else '',
                 'message':message,
-                'qr_available':service=='taobao' or bool(profile.get('phone_info') or saved and saved['data'].get('phone_info'))})
+                'qr_available':service=='taobao' or service=='baidu-map' and bool(profile.get('phone_info') or saved and saved['data'].get('phone_info'))})
         return {'login_id':login_id,'services':rows,'data_directory':str(self.storage.path.parent) if self.storage else None}
 
     @contextmanager
     def candidate(self,snapshot,service,cookies,metadata):
         headers={'User-Agent':USER_AGENT,'Referer':BAIDU_ENTRY} if service=='baidu-map' else {
             'User-Agent':'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Mobile Safari/537.36','Referer':TAOBAO_ENTRY,'Origin':'https://pages-fast.m.taobao.com'}
+        if service=='kuaishou':headers={'User-Agent':'kwai-android'}
         with requests.Session(impersonate='chrome',headers=headers) as client:
             for cookie in cookies:
                 client.cookies.set(cookie['name'],cookie['value'],domain=cookie['domain'],path=cookie['path'])
@@ -149,6 +155,11 @@ class PartnerLogins:
             uid=str(data.get('uid') or '')
             if not uid:raise CheckinError('百度地图未确认本人身份，原登录态已保留。','PARTNER_PROFILE_REJECTED',409)
             result_meta={'uid':uid,'phone_info':info}
+        elif service=='kuaishou':
+            result_meta=normalize_login(metadata)
+            client._credential_data=result_meta
+            CheckinKuaishou(lambda:snapshot,temporary)._request(client,KUAISHOU_QUERY,{'shareText':'','deepLink':''})
+            uid=result_meta['uid']
         else:
             result=CheckinTaobao(lambda:snapshot,temporary)._call(client,'mtop.user.getUserSimple',{})
             uid=str(result.get('userNumId') or result.get('userId') or '') if isinstance(result,dict) else ''
@@ -166,7 +177,8 @@ class PartnerLogins:
         saved=self.cache.install(SERVICES[service]['scope'],latest,client,metadata,expiry_cookies=SERVICES[service]['expiry'],
             expected_generation=previous['generation'] if previous else None,replace_identity=replace)
         if saved is None:raise CheckinError('登录态已被另一项更新替换，请重新检查。','PARTNER_LOGIN_CHANGED',409)
-        self._record(snapshot['id'],service,{**metadata,'checked_at':self.now(),'message':'已核对官方身份并保存登录态。','error_code':''})
+        profile={key:metadata[key] for key in ('uid','phone_info') if key in metadata}
+        self._record(snapshot['id'],service,{**profile,'checked_at':self.now(),'message':'已核对官方身份并保存登录态。','error_code':''})
 
     def _begin(self,login_id):
         if not self.beans.begin_login_update(login_id):
@@ -216,6 +228,8 @@ class PartnerLogins:
 
     def start_qr(self,owner,login_id,service):
         self.prune();snapshot,saved,metadata=self.context(login_id,service)
+        if service=='kuaishou':
+            raise CheckinError('快手当前支持导入本人完整 JSON 登录资料，请使用手动更新。','QR_UNAVAILABLE',409)
         if service=='baidu-map' and not metadata.get('phone_info'):
             raise CheckinError('首次配置百度地图需先导入本人设备资料，后续可直接扫码更新。','BAIDU_DEVICE_MISSING',400)
         self._begin(login_id);qr=None

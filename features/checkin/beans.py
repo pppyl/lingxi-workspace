@@ -23,6 +23,7 @@ from .migu import TASK_NAME as MIGU_TASK_NAME, TASK as MIGU_TASK
 from .baidu_map import TASK_NAME as BAIDU_MAP_TASK_NAME, TASK as BAIDU_MAP_TASK
 from .taobao import TASK_NAME as TAOBAO_TASK_NAME, TASK as TAOBAO_TASK
 from .cainiao import TASK_NAME as CAINIAO_TASK_NAME, TASK as CAINIAO_TASK
+from .kuaishou import TASK_NAME as KUAISHOU_TASK_NAME, TASK as KUAISHOU_TASK
 from .video import VIDEO_TASKS
 
 
@@ -65,10 +66,9 @@ PAGE_REDIRECTS = {
 # Protocol findings as of 2026-11-25, not account-specific execution results
 # or runnable adapters. Evidence: docs/protocols/CHECKIN_BEANS_PROTOCOL.md.
 TASK_LIMITATIONS = {
-    '去快手极速版领金币': '纯 Python 的快手认证和任务回传尚未接通；原生实机对照不计入无人值守支持。',
     '头条极速版刷视频': '入口调起头条极速版；实际任务查询、观看进度及合作回传尚未复刻。',
-    '去支付宝施肥': '入口进入支付宝小程序；尚无本人的支付宝授权和施肥结果，当前未接通。',
-    '去芭芭农场领水果': '已定位淘宝农场业务页；可复用本人淘宝授权，但本任务的真实农场操作、承接及完成回执尚未接通。',
+    '去支付宝施肥': '已定位支付宝场景授权流程，仍需取得该任务的有效业务入口和真实施肥完成回执。',
+    '去芭芭农场领水果': '本人淘宝资料查询有效，但按官方页面配置查询农场仍返回 FAIL_SYS_UNAUTHORIZED_ENTRANCE；需要农场专属入口授权及真实操作回执。',
     '头条看热门视频赚钱': '入口调起头条；实际任务查询、观看进度及合作回传尚未复刻。',
     '打开快影即可赚金币': '入口为快影原生 KRN 福利中心；独立任务模块、认证及完成回传尚未复刻。',
     '去大众点评吃喝玩乐': '入口进入点评原生任务模块；网页仅负责调起，实际任务接口和完成回执尚未接通。',
@@ -103,6 +103,10 @@ TASK_LIMITATIONS = {
 
 
 def _task_support(item):
+    if item['taskName'] == KUAISHOU_TASK_NAME:
+        if (str(item['taskCategory']), str(item['taskType']), item['jumpUrl']) == KUAISHOU_TASK:
+            return True, '自动查询并承接本人快手回调任务，核对移动官方进度后领豆；运行无需手机。'
+        return False, '官方快手任务入口已变化，需要重新核对。'
     if item['taskName'] == CAINIAO_TASK_NAME:
         if (str(item['taskCategory']), str(item['taskType']), item['jumpUrl']) == CAINIAO_TASK:
             return True, '复用本人兼容授权，核对菜鸟关联身份并访问任务首页，提交官方移动渠道回调后核对领豆；不会用普通签到替代。'
@@ -243,7 +247,8 @@ def _catalog(client, session):
 
 class CheckinBeans:
     def __init__(self, scheduler, storage, query=None, video_factory=None, cloud_factory=None,
-                 migu_factory=None, baidu_map_factory=None, taobao_factory=None, cainiao_factory=None):
+                 migu_factory=None, baidu_map_factory=None, taobao_factory=None, cainiao_factory=None,
+                 kuaishou_factory=None):
         self.scheduler, self.storage = scheduler, storage
         self.query = query
         self.video_factory = video_factory
@@ -252,6 +257,7 @@ class CheckinBeans:
         self.baidu_map_factory = baidu_map_factory
         self.taobao_factory = taobao_factory
         self.cainiao_factory = cainiao_factory
+        self.kuaishou_factory = kuaishou_factory
         self.pending = {}
         self.locks, self.lock = {}, RLock()
         self.data = (storage.load_activity_data('checkin-bean-tasks') if storage else None) or {}
@@ -288,13 +294,21 @@ class CheckinBeans:
         status = _catalog(client, session)
         status['tasks'] = _tasks(client, session)
         saved = self.data.get(login_id, {})
+        kuaishou = saved.get('kuaishou', {})
+        if (kuaishou.get('awaiting_mobile_confirmation') and kuaishou.get('date') == status['server_time'][:10]
+                and any(row['name'] == KUAISHOU_TASK_NAME and row['state'] in {'claimable', 'claimed'}
+                        for row in status['tasks'])):
+            self._record(login_id, kuaishou={**kuaishou, 'awaiting_mobile_confirmation': False,
+                                            'business_callback_verified': True})
         for row in status['tasks']:
-            row['partner_service']={BAIDU_MAP_TASK_NAME:'baidu-map',TAOBAO_TASK_NAME:'taobao',CAINIAO_TASK_NAME:'taobao'}.get(row['name'])
+            row['partner_service']={BAIDU_MAP_TASK_NAME:'baidu-map',TAOBAO_TASK_NAME:'taobao',CAINIAO_TASK_NAME:'taobao',
+                                    KUAISHOU_TASK_NAME:'kuaishou'}.get(row['name'])
             deferred = (saved.get('deferred_tasks', {}).get(row['id'])
                         if saved.get('date') == status['server_time'][:10] else None)
             if row['state'] == 'unfinished' and deferred:
                 row['reason'] = deferred['message']
-                row['partner_login_required']=deferred['code'] in {'BAIDU_MAP_LOGIN_REQUIRED','TAOBAO_LOGIN_REQUIRED'}
+                row['partner_login_required']=deferred['code'] in {'BAIDU_MAP_LOGIN_REQUIRED','TAOBAO_LOGIN_REQUIRED',
+                                                                 'KUAISHOU_LOGIN_REQUIRED','KUAISHOU_QUERY_REJECTED'}
         status['tasks_available'] = bool(status['tasks'])
         if not status['tasks_available']:
             saved = self.data.get(login_id, {})
@@ -442,7 +456,7 @@ class CheckinBeans:
                     auth_codes = {
                         'APP_LOGIN_REQUIRED', 'ACTIVITY_LOGIN_REQUIRED', 'BILLS_LOGIN_REQUIRED',
                         'USAGE_LOGIN_REQUIRED', 'VIDEO_LOGIN_REQUIRED', 'CLOUD_LOGIN_REQUIRED', 'MIGU_LOGIN_REQUIRED',
-                        'BAIDU_MAP_LOGIN_REQUIRED','TAOBAO_LOGIN_REQUIRED'}
+                        'BAIDU_MAP_LOGIN_REQUIRED','TAOBAO_LOGIN_REQUIRED','KUAISHOU_LOGIN_REQUIRED'}
                     auth_failed = bool(auth_codes & ({record.get('code')} | {
                         item.get('code') for item in record.get('deferred_tasks', {}).values()}))
                 if auth_failed:
@@ -465,7 +479,9 @@ class CheckinBeans:
         baidu_map_task = item['taskName'] == BAIDU_MAP_TASK_NAME
         taobao_task = item['taskName'] == TAOBAO_TASK_NAME
         cainiao_task = item['taskName'] == CAINIAO_TASK_NAME
-        if not migu_task and not baidu_map_task and not taobao_task and not cainiao_task:
+        kuaishou_task = item['taskName'] == KUAISHOU_TASK_NAME
+        partner_task = migu_task or baidu_map_task or taobao_task or cainiao_task or kuaishou_task
+        if not partner_task:
             target = item['jumpUrl']
             for _ in range(3):
                 page = session.get(target, timeout=(10, 20), allow_redirects=False)
@@ -480,7 +496,15 @@ class CheckinBeans:
                 raise CheckinError(f'任务页面 HTTP {page.status_code}，未提交完成记录。', 'TASK_PAGE_FAILED')
         pending = {'kind': 'finish', 'id': task_id, 'month': month,
                    'date': self.scheduler.now().date().isoformat()}
-        if cainiao_task:
+        if kuaishou_task:
+            if self.kuaishou_factory is None:
+                raise CheckinError('当前账号尚未接入本人快手登录。', 'KUAISHOU_LOGIN_REQUIRED', 401)
+            def prepare_kuaishou():
+                client._current(snapshot)
+                self._save(login_id, pending)
+            result = self.kuaishou_factory(login_id).complete(item, info, before_submit=prepare_kuaishou)
+            self._record(login_id, kuaishou={**result, 'date':pending['date']})
+        elif cainiao_task:
             if self.cainiao_factory is None:
                 raise CheckinError('当前账号尚未接入菜鸟兼容授权。','TAOBAO_LOGIN_REQUIRED',401)
             def prepare_cainiao():
@@ -531,7 +555,7 @@ class CheckinBeans:
             complete_activity_browse(session, info, before_submit=prepare)
         elif item['taskName'] in QUERY_TASKS:
             self.query(login_id, QUERY_TASKS[item['taskName']][0])
-        if not migu_task and not baidu_map_task and not taobao_task and not cainiao_task and item['taskName'] not in VIDEO_TASKS and item['taskName'] not in CLOUD_TASKS and item['taskName'] not in OPEN_TASKS:
+        if not partner_task and item['taskName'] not in VIDEO_TASKS and item['taskName'] not in CLOUD_TASKS and item['taskName'] not in OPEN_TASKS:
             time.sleep(max(0, duration - (time.monotonic() - start)))
             random = '4xani51zw4aokw2tv73i206easvcntf2' + str(int(time.time() * 1000))
             body = {'taskId': task_id, 'taskType': info['taskType'], 'random': random,
@@ -542,6 +566,9 @@ class CheckinBeans:
         state = self._state(login_id, client, session)
         task = next((row for row in state['tasks'] if row['id'] == task_id), None)
         if task is None or task['state'] not in {'claimable', 'claimed'}:
+            if kuaishou_task:
+                raise CheckinError('快手已承接，移动官方回传尚待确认；将先查询结果，不重复提交。',
+                                   'RESULT_UNCERTAIN', 409, uncertain=True)
             raise CheckinError('官方尚未确认任务完成，请先查询结果。', 'RESULT_UNCERTAIN', 409, uncertain=True)
         return task['state']
 
@@ -592,6 +619,7 @@ class CheckinBeans:
                                                'CLOUD_AUTH_REQUIRED', 'CLOUD_LOGIN_REQUIRED',
                                                'MIGU_LOGIN_REQUIRED',
                                                'BAIDU_MAP_LOGIN_REQUIRED', 'BAIDU_MAP_QUERY_REJECTED',
+                                               'KUAISHOU_LOGIN_REQUIRED', 'KUAISHOU_QUERY_REJECTED', 'KUAISHOU_TASK_CHANGED',
                                                'TAOBAO_LOGIN_REQUIRED',
                                                'APP_LOGIN_REQUIRED', 'BILLS_LOGIN_REQUIRED', 'USAGE_LOGIN_REQUIRED',
                                                'SERVICES_LOGIN_REQUIRED',

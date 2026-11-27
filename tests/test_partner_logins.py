@@ -104,6 +104,36 @@ class PartnerLoginTests(unittest.TestCase):
         self.assertEqual(self.cache.load(TAOBAO_SCOPE,self.snapshot()),before)
         self.assertEqual(self.manager.status('a')['services'][1]['state'],'saved')
 
+    def test_kuaishou_validated_import_and_check_keep_secrets_in_bound_credentials_only(self):
+        from features.checkin.kuaishou import SCOPE
+        from tests.test_kuaishou import login
+        data=login();other=self.cache.peek(TAOBAO_SCOPE,self.snapshot('b'))
+        with patch('features.checkin.partner_logins.CheckinKuaishou._request',return_value={'result':1}):
+            reply=self.manager.import_session('a','kuaishou',json.dumps(data))
+            before=self.cache.peek(SCOPE,self.snapshot())
+            self.manager.check('a','kuaishou')
+        after=self.cache.peek(SCOPE,self.snapshot())
+        self.assertEqual(after['generation'],before['generation'])
+        self.assertEqual(after['data']['api_service_token'],'synthetic-token')
+        self.assertIsNone(after['expires_at'])
+        self.assertNotIn('synthetic-token',json.dumps(reply))
+        self.assertNotIn('synthetic-client-salt',json.dumps(self.manager.profiles))
+        self.assertEqual(self.cache.peek(TAOBAO_SCOPE,self.snapshot('b')),other)
+        self.assertFalse(next(x for x in reply['services'] if x['service']=='kuaishou')['qr_available'])
+
+    def test_kuaishou_rejected_replacement_keeps_old_login_and_account_binding(self):
+        from features.checkin.kuaishou import SCOPE
+        from tests.test_kuaishou import login
+        with patch('features.checkin.partner_logins.CheckinKuaishou._request',return_value={'result':1}):
+            self.manager.import_session('a','kuaishou',json.dumps(login()))
+        original=self.cache.peek(SCOPE,self.snapshot())
+        replacement={**login(),'api_service_token':'rejected-new-token'}
+        with patch('features.checkin.partner_logins.CheckinKuaishou._request',side_effect=CheckinError('拒绝','KUAISHOU_QUERY_REJECTED',409)):
+            with self.assertRaises(CheckinError):self.manager.import_session('a','kuaishou',json.dumps(replacement))
+        self.assertEqual(self.cache.peek(SCOPE,self.snapshot()),original)
+        with self.assertRaises(CheckinError):
+            self.manager.import_session('a','kuaishou',json.dumps({**login(),'uid':'other-owner'}))
+
     def test_incomplete_identity_response_is_not_mistaken_for_expired_authentication(self):
         before=self.cache.peek(TAOBAO_SCOPE,self.snapshot())
         with patch('features.checkin.partner_logins.CheckinTaobao._call',return_value={}):

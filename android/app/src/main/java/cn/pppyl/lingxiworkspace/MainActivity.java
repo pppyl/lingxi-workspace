@@ -76,6 +76,8 @@ public final class MainActivity extends Activity {
                 if ("127.0.0.1".equals(uri.getHost())) return false;
                 if ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) {
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                } else if ("tel".equals(uri.getScheme()) && uri.getSchemeSpecificPart().matches("1[3-9][0-9]{9}")) {
+                    startActivity(new Intent(Intent.ACTION_DIAL, uri));
                 }
                 return true;
             }

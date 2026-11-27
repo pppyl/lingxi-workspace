@@ -28,7 +28,7 @@
       const actions=node('div','partner-service-actions');
       for(const [label,kind] of [['检查并更新','check'],['扫码更新','qr'],['手动更新','import']]){
         const button=node('button',kind==='qr'?'primary':'secondary',label);button.type='button';button.dataset.partnerAction=kind;
-        if(kind==='qr'&&!service.qr_available){button.dataset.unavailable='true';button.title='首次需先导入本人百度地图设备资料，后续可扫码更新。';}
+        if(kind==='qr'&&!service.qr_available){button.dataset.unavailable='true';button.title=service.service==='kuaishou'?'请使用手动更新导入本人完整 JSON 登录资料。':'首次需先导入本人百度地图设备资料，后续可扫码更新。';}
         button.addEventListener('click',()=>kind==='check'?update(service.service):kind==='qr'?startQr(service.service):openImport(service.service));
         actions.append(button);
       }
@@ -92,7 +92,7 @@
   }
   async function open(service){
     feedback('');if(!dialog.open)dialog.showModal();render();await load();
-    if(dialog.open&&['baidu-map','taobao'].includes(service)){
+    if(dialog.open&&['baidu-map','taobao','kuaishou'].includes(service)){
       const card=dialog.querySelector(`[data-service="${service}"]`);
       card?.scrollIntoView({block:'nearest'});card?.querySelector('button')?.focus({preventScroll:true});
     }

@@ -4,3 +4,4 @@
 
 # Preserve the original bytes checked by the bundled SDK's SHA-256 validation.
 recharge/member_benefits_runtime/assets/const-id/const-id-1.1511.0.js binary !eol
+activities/net_age_runtime/* binary !eol

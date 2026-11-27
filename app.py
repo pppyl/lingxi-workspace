@@ -1282,6 +1282,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
     from features.checkin.baidu_map import CheckinBaiduMap
     from features.checkin.taobao import CheckinTaobao
     from features.checkin.cainiao import CheckinCainiao
+    from features.checkin.kuaishou import CheckinKuaishou
     checkin_beans = CheckinBeans(checkin_scheduler, database, query=bean_query,
         video_factory=lambda login_id: CheckinVideo(lambda:checkin_credentials(login_id), credential_cache,
             recover=lambda snapshot:app.extensions['app_identity_recover'](snapshot)),
@@ -1290,7 +1291,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         migu_factory=lambda login_id: CheckinMigu(lambda:checkin_credentials(login_id), credential_cache),
         baidu_map_factory=lambda login_id: CheckinBaiduMap(lambda:checkin_credentials(login_id), credential_cache),
         taobao_factory=lambda login_id: CheckinTaobao(lambda:checkin_credentials(login_id), credential_cache),
-        cainiao_factory=lambda login_id: CheckinCainiao(lambda:checkin_credentials(login_id), credential_cache))
+        cainiao_factory=lambda login_id: CheckinCainiao(lambda:checkin_credentials(login_id), credential_cache),
+        kuaishou_factory=lambda login_id: CheckinKuaishou(lambda:checkin_credentials(login_id), credential_cache))
     checkin_scheduler.beans = checkin_beans
     app.extensions['checkin_beans'] = checkin_beans
     from features.checkin.partner_logins import register_partner_logins

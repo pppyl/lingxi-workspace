@@ -112,6 +112,39 @@ class BeanTaskTests(unittest.TestCase):
         self.assertEqual(row['partner_service'],'baidu-map');self.assertTrue(row['partner_login_required'])
         self.assertEqual(row['reason'],'本人百度地图登录失效');self.assertEqual(self.client.writes,[])
 
+    def test_kuaishou_delayed_callback_is_reconciled_after_restart_without_replaying_undertake(self):
+        self.client.task.update(taskName='去快手极速版领金币', taskCategory='6', taskType='1', jumpUrl='kuaishou')
+        self.client._current = Mock()
+        adapter = Mock()
+        def complete(_item, _info, *, before_submit):
+            before_submit()
+            return {'undertake_confirmed': True, 'awaiting_mobile_confirmation': True}
+        adapter.complete.side_effect = complete
+        self.manager.kuaishou_factory = Mock(return_value=adapter)
+        self.manager._perform_tasks('a')
+        self.assertTrue(self.manager.pending['a'])
+        self.assertEqual(self.client.writes, [])
+        restarted = CheckinBeans(self.scheduler, self.storage, kuaishou_factory=self.manager.kuaishou_factory)
+        self.addCleanup(restarted.executor.shutdown)
+        restarted._perform_tasks('a')
+        adapter.complete.assert_called_once()
+        self.client.status = 1
+        restarted._perform_tasks('a')
+        adapter.complete.assert_called_once()
+        self.assertEqual([path for path, _ in self.client.writes], [AWARD])
+        self.assertEqual(restarted.data['a']['balance'], '3')
+        self.assertFalse(restarted.data['a']['kuaishou']['awaiting_mobile_confirmation'])
+        self.assertTrue(restarted.data['a']['kuaishou']['business_callback_verified'])
+
+    def test_completed_kuaishou_is_skipped_without_using_generic_finish(self):
+        self.client.task.update(taskName='去快手极速版领金币', taskCategory='6', taskType='1', jumpUrl='kuaishou')
+        self.client.status = 2
+        factory = Mock()
+        self.manager.kuaishou_factory = factory
+        self.manager._perform_tasks('a')
+        factory.assert_not_called()
+        self.assertEqual(self.client.writes, [])
+
     @patch('features.checkin.beans.time.sleep')
     def test_query_then_finish_then_claim_and_no_replay(self, _sleep):
         self.manager._perform_tasks('a')

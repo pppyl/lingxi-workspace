@@ -1,0 +1,74 @@
+.ng-page{max-width:1800px;margin:auto}
+.ng-heading,.ng-section-heading,.ng-actions{display:flex;align-items:center;gap:12px;justify-content:space-between}
+.ng-heading{margin-bottom:22px}
+.ng-heading h1{margin-bottom:6px}
+.ng-muted,.ng-note{color:var(--muted,#8094ae);font-size:14px}
+.ng-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:20px}
+.ng-panel{background:var(--card,#fff);border:1px solid var(--border,#dce5f1);border-radius:12px;padding:20px}
+.ng-panel h2{font-size:18px;margin:0}
+.ng-content{display:grid;gap:16px;align-content:start;min-width:0}
+.ng-accounts{align-self:start;position:sticky;top:20px;max-height:78vh;overflow:auto;padding:14px}
+.ng-accounts h2{padding:5px 4px 16px}
+.ng-account{width:100%;text-align:left;display:grid;gap:6px;margin-bottom:8px;padding:12px;background:transparent;border:1px solid var(--border,#dce5f1);border-radius:8px;color:inherit}
+.ng-account[aria-pressed=true],.ng-tier[aria-pressed=true]{border-color:#3676f7;background:var(--hover,#edf4ff)}
+.ng-account small{color:var(--muted,#8094ae)}
+.ng-section-heading{margin-bottom:18px}
+.ng-section-heading .ng-actions{justify-content:flex-end}
+.ng-tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}
+.ng-tier{display:grid;gap:10px;padding:18px;text-align:left;background:transparent;border:1px solid var(--border,#dce5f1);border-radius:10px;color:inherit}
+.ng-tier strong{font-size:22px}
+.ng-tier span{color:var(--muted,#8094ae)}
+.ng-team-overview{display:flex;justify-content:space-between;align-items:center;gap:22px;margin:24px 0}
+.ng-team-overview>div{display:grid;gap:6px}
+.ng-team-overview strong{font-size:32px}
+.ng-table-wrap{overflow:auto}
+.ng-table-wrap table{width:100%;border-collapse:collapse}
+.ng-table-wrap th,.ng-table-wrap td{padding:12px;text-align:left;border-bottom:1px solid var(--border,#dce5f1)}
+.ng-table-wrap th{color:var(--muted,#8094ae);font-weight:400}
+.ng-bottom-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.ng-list{list-style:none;padding:0;margin:0}
+.ng-list li{padding:12px 0;border-bottom:1px solid var(--border,#dce5f1);display:grid;gap:6px}
+.ng-list li:last-child{border:0}
+.ng-note{margin:16px 0 0;line-height:1.7}
+.ng-rules{white-space:pre-wrap;line-height:1.8;font-size:14px;max-height:460px;overflow:auto;margin-top:16px}
+.ng-details summary{cursor:pointer;font-weight:600}
+.ng-actions{justify-content:flex-start;flex-wrap:wrap}
+#ng-feedback{padding:12px 16px;border:1px solid var(--border,#dce5f1);border-radius:8px;background:var(--card,#fff)}
+#ng-feedback.error,#ng-confirm-error,#ng-call-message.error{color:#cc4545}
+#ng-content[aria-busy=true]{opacity:.7}
+#ng-confirm,#ng-share,#ng-call-dialog{width:min(640px,calc(100vw - 32px));box-sizing:border-box;max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--border,#dce5f1);border-radius:14px;padding:24px;background:var(--card,#fff);color:inherit}
+#ng-confirm::backdrop,#ng-share::backdrop,#ng-call-dialog::backdrop{background:#14254066}
+#ng-confirm label,#ng-share label{display:grid;gap:10px;margin:16px 0}
+#ng-confirm input,#ng-share input{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--border,#dce5f1);border-radius:8px;background:transparent;color:inherit}
+#ng-confirm footer{justify-content:flex-end;margin-top:22px}
+#ng-plan-preview{line-height:1.8}
+button:disabled{opacity:.5;cursor:not-allowed}
+[hidden]{display:none!important}
+@media(max-width:900px){.ng-heading{align-items:flex-start;flex-direction:column}
+.ng-layout{grid-template-columns:1fr}
+.ng-accounts{position:static;max-height:180px}
+#ng-accounts{display:flex;gap:8px;overflow:auto}
+.ng-account{min-width:150px;margin:0}
+.ng-bottom-grid{grid-template-columns:1fr}
+.ng-team-overview{gap:14px;flex-wrap:wrap}
+.ng-panel{padding:16px}
+}
+
+.ng-draw-actions{margin-top:16px}
+.ng-call-panel{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0 0}
+.ng-call-panel h3{font-size:16px;margin:0 0 6px}
+.ng-call-panel p{margin:0;line-height:1.6}
+.ng-call-panel button{flex-shrink:0}
+.ng-call-account{font-weight:600;margin:0}
+#ng-call-dial-form{margin-top:20px}
+#ng-call-dial-form>label{display:block;margin-bottom:10px}
+.ng-call-dial-row{display:flex;align-items:stretch;gap:10px}
+#ng-call-number{width:100%;min-width:0;box-sizing:border-box;padding:12px;border:1px solid var(--border,#dce5f1);border-radius:8px;background:transparent;color:inherit;font-size:18px}
+.ng-call-dial-row button{flex-shrink:0}
+#ng-call-return{margin-top:16px}
+#ng-call-again{display:inline-block;margin-bottom:16px}
+.ng-call-confirmation{display:flex;align-items:flex-start;gap:10px;line-height:1.7;cursor:pointer}
+#ng-call-connected{width:18px;height:18px;flex-shrink:0;margin:4px 0 0}
+#ng-call-message{font-size:14px;line-height:1.7;color:var(--muted,#8094ae)}
+#ng-call-dialog footer{justify-content:flex-end;margin-top:20px}
+@media(max-width:480px){.ng-call-panel{align-items:flex-start;flex-direction:column}#ng-call-dialog{padding:20px}.ng-call-dial-row{flex-wrap:wrap}.ng-call-dial-row button{width:100%}}

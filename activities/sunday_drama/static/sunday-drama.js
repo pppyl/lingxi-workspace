@@ -5,7 +5,7 @@
   const clock = new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
   let model = {accounts:[],settings:{},campaign:{}}, selected = '', loading = false, pendingLoad = false;
   let rendered = '', accountSignature = '', confirmation = null, inviteOwner = '';
-  const opened = new Set(), posting = new Set();
+  const posting = new Set();
   const node = (tag, className='', text) => {
     const element = document.createElement(tag); element.className = className;
     if (text !== undefined) element.textContent = text;
@@ -27,13 +27,13 @@
   }
   function action(text, kind, extra={}, disabled=false) {
     const button = node('button','secondary',text); button.type = 'button';
-    button.disabled = disabled || !model.campaign.active || current()?.status !== 'active' || current()?.running || current()?.pending;
+    button.disabled = disabled || !model.campaign.active || current()?.status !== 'active' || current()?.running || current()?.pending || posting.has(selected);
     button.addEventListener('click', () => run(kind,extra));
     return button;
   }
   function select(id) {
     if (selected !== id) {
-      selected = id; rendered = ''; opened.clear(); feedback('');
+      selected = id; rendered = ''; $('drama-completed').open = false; feedback('');
       for (const name of ['drama-share','drama-confirm']) $(name).close();
       inviteOwner = ''; confirmation = null;
     }
@@ -57,84 +57,107 @@
   }
   function renderObservation(account) {
     const observation = account?.observation;
-    const key = `${selected}:${observation?.queried_at}:${account?.running}:${account?.pending}`;
+    const key = `${selected}:${observation?.queried_at}:${account?.status}:${account?.running}:${account?.pending}:${model.campaign.active}:${posting.has(selected)}`;
     if (key === rendered) return;
     rendered = key;
     $('drama-remain').textContent = observation?.remaining.remain ?? '—';
     $('drama-video-day').textContent = observation ? `${observation.video.doneDayCount} / ${observation.video.canDayCount}` : '—';
     $('drama-video-week').textContent = observation ? `${observation.video.doneWeekCount} / ${observation.video.canWeekCount}` : '—';
-    $('drama-video-summary').textContent = observation ? `今日已完成 ${observation.video.doneDayCount} / ${observation.video.canDayCount} 次；周一至周六每天 1 次，周日 2 次。` : '周一至周六每天 1 次，周日 2 次。';
     const tasks = observation?.tasks || [];
-    $('drama-task-count').textContent = tasks.length ? `${tasks.filter(t=>t.taskStage==='DONE').length} / ${tasks.length}` : '—';
-    $('drama-tasks').replaceChildren(...(tasks.length ? tasks.map(task => {
+    const completed = tasks.filter(task=>task.taskStage==='DONE');
+    const pending = tasks.filter(task=>task.taskStage!=='DONE');
+    $('drama-task-count').textContent = tasks.length ? `${completed.length} / ${tasks.length}` : '—';
+    $('drama-tasks').replaceChildren(...pending.map(task => {
       const item = node('li','drama-task');
-      const top = node('div','drama-task-top'), copy = node('div');
-      copy.append(node('h3','',task.name),node('p','',task.description || '以官方任务要求为准'));
-      top.append(copy,node('span','drama-task-reward',`+${task.earnOpportunity} 次`));
-      const bottom = node('div','drama-task-bottom');
-      const done = task.taskStage==='DONE', ready = task.taskStage==='WAIT_RECEIVE';
-      const restricted=task.qualification==='ineligible', waiting=task.qualification==='waiting';
-      bottom.append(node('span','drama-state '+(done?'done':ready?'wait':''),done?'本周已完成':ready?'奖励待领取':restricted?'当前不符资格':waiting?'等待处理':task.automatic?'可自动完成':'尚未接通'));
-      if (!done && (ready || task.automatic)) bottom.append(action(ready?'领取机会':restricted||waiting?'重新核对':'去完成','task',{task_id:task.taskId}));
-      item.append(top,bottom);
-      if (task.reason) {
-        const detail = node('details'); detail.open=opened.has(task.taskId);
-        detail.append(node('summary','','查看说明'),node('p','',task.reason));
-        detail.addEventListener('toggle',()=>detail.open?opened.add(task.taskId):opened.delete(task.taskId)); item.append(detail);
-      }
+      const copy = node('div'), actions = node('div','drama-task-actions');
+      copy.append(node('h3','',task.name));
+      const note = task.reason || task.description;
+      if (note && note!==task.name) copy.append(node('p','drama-muted',note));
+      if (task.earnOpportunity!=null) actions.append(node('span','drama-task-reward',`+${task.earnOpportunity} 次`));
+      const ready = task.taskStage==='WAIT_RECEIVE';
+      const restricted = task.qualification==='ineligible', waiting = task.qualification==='waiting';
+      if (restricted || waiting || (!ready && !task.automatic)) actions.append(node('span','drama-state',restricted?'当前不符资格':waiting?'等待处理':'尚未接通'));
+      if (ready || task.automatic) actions.append(action(ready?'领取机会':restricted||waiting?'重新核对':'去完成','task',{task_id:task.taskId}));
+      item.append(copy,actions);
       return item;
-    }) : [node('li','drama-empty',account?.status==='active'?'查询后显示当前账号的官方任务。':'请先在账号管理恢复登录。')]));
+    }));
+    if (!tasks.length) {
+      $('drama-tasks').append(node('li','drama-empty',observation?'本周暂无任务。':account?.status==='active'?'刷新进度后可查看任务。':'请先在账号管理登录。'));
+    }
+    $('drama-completed').hidden = !completed.length;
+    $('drama-completed-label').textContent = completed.length===tasks.length ? '本周任务已完成' : '已完成任务';
+    $('drama-completed-tasks').replaceChildren(...completed.map(task=>{
+      const item = node('li','drama-task drama-task-done');
+      item.append(node('h3','',task.name));
+      if (task.earnOpportunity!=null) item.append(node('span','drama-task-reward',`+${task.earnOpportunity} 次`));
+      return item;
+    }));
     const invite = observation?.invite;
     $('drama-invite-count').textContent = invite?.count ?? '—';
     const claimed = invite?.prizes.some(p=>['USED','UNUSED'].includes(p.useStatus));
     $('drama-invite-rewards').replaceChildren(...(invite?.prizes || []).map(prize => {
       const row = node('li'), info=node('div','',prize.name), target=[3,5,7][Number(prize.stage)-1];
-      info.append(node('small','',`累计邀请 ${target} 人 · ${['USED','UNUSED'].includes(prize.useStatus)?'已领取':prize.useStatus==='NOSTOCK'?'本档暂无库存':`还差 ${Math.max(0,target-invite.count)} 人`}`));
+      const received = ['USED','UNUSED'].includes(prize.useStatus);
+      const eligible = !claimed && invite.available && invite.count>=target && prize.useStatus==='WITHOUT';
+      info.append(node('small','',`累计邀请 ${target} 人`));
+      row.append(info);
+      if (!eligible) {
+        const status = received?'已领取':claimed?'已领取其他档位':prize.useStatus==='NOSTOCK'?'暂无库存':invite.count<target?`还差 ${target-invite.count} 人`:'暂不可领取';
+        row.append(node('span','drama-state',status));
+        return row;
+      }
       const button=node('button','secondary','领取'); button.type='button';
-      button.disabled=!model.campaign.active || !invite.available || invite.count<target || claimed || prize.useStatus!=='WITHOUT' || account.running || account.pending;
+      button.disabled=!model.campaign.active || account.status!=='active' || account.running || account.pending || posting.has(selected);
       button.addEventListener('click',()=>{
         confirmation={id:selected,kind:'invite_claim',prize_id:String(prize.id),confirmed:true};
         $('drama-confirm-text').textContent=`${label(account)} 将领取「${prize.name}」。`;
         $('drama-confirm').showModal();
       });
-      row.append(info,button); return row;
+      row.append(button); return row;
     }));
     const prizes=observation?.prizes || [];
     $('drama-prizes').replaceChildren(...(prizes.length?prizes.map(prize=>{
       const item=node('li','drama-prize',prize.prizeName || prize.name || '官方未提供奖品名称');
       item.append(node('small','',date(prize.winAt || prize.winTime || prize.createTime))); return item;
-    }):[node('li','drama-empty','暂无官方中奖记录。抽奖机会不代表已中奖。')]));
-    $('drama-sync').textContent = observation ? `官方记录核对于 ${date(observation.queried_at)} · 北京时间` : '页面定时刷新本地记录';
+    }):[node('li','drama-empty','暂无中奖记录。')]));
+    $('drama-sync').textContent = observation ? `最近核对 ${date(observation.queried_at)} · 北京时间` : '';
+    $('drama-sync').hidden = !observation;
   }
   function render() {
     renderAccounts();
     const account=current(), observation=account?.observation;
-    $('drama-period').textContent=model.campaign.end_at?`规则期限：${model.campaign.start_at.slice(0,10)} 至 ${model.campaign.end_at.slice(0,10)} · 以最新官方规则为准`:'正在读取活动规则…';
+    $('drama-period').textContent=model.campaign.end_at?`活动时间 ${model.campaign.start_at.slice(0,10)} 至 ${model.campaign.end_at.slice(0,10)}`:'';
     $('drama-announcement').textContent=model.campaign.announcement || ''; $('drama-announcement').hidden=!model.campaign.announcement;
-    $('drama-current-account').textContent=label(account);
     $('drama-content').setAttribute('aria-busy',String(!!(account?.refreshing || account?.running)));
-    $('drama-draw-window').textContent=model.campaign.ended?'活动已结束，保留已有记录':sunday()?'今天为周日，抽奖机会将在周一 00:00 清零':'每周日开放抽奖 · 机会每周一 00:00 清零';
-    $('drama-signin-state').textContent=model.campaign.signin_paused?'官方公告：签到好礼暂时下线，预计 12 月恢复；当前不提交活动签到。':'活动签到的当前接口尚未接通，未显示为已完成。';
-    $('drama-rules').textContent=model.campaign.rules || '主动查询活动后显示完整官方规则。';
+    const drawDay=!!model.server_time && sunday();
+    $('drama-draw-window').textContent=model.campaign.ended?'活动已结束':drawDay?'今日开放 · 周一 00:00 清零':'周日开放 · 周一 00:00 清零';
+    $('drama-signin-state').textContent=model.campaign.signin_paused?'活动签到暂停':'活动签到暂不可用';
+    $('drama-rules').textContent=model.campaign.rules || '暂无官方规则。';
     const blocked=!account || account.status!=='active' || !model.campaign.active || account.running || account.pending || posting.has(selected);
     $('drama-refresh').disabled=!account || account.status!=='active' || posting.has(selected);
     $('drama-run').disabled=blocked;
+    $('drama-run').hidden=!!(observation?.tasks.length && observation.tasks.every(task=>task.taskStage==='DONE') && !account.running && !posting.has(selected));
     $('drama-run').textContent=account?.running?'任务执行中…':'完成可做任务';
-    $('drama-draw').disabled=blocked || !sunday() || !(observation?.remaining.remain>0);
+    $('drama-draw').disabled=blocked || !drawDay || !(observation?.remaining.remain>0);
     $('drama-video').disabled=blocked || !observation || observation.video.doneDayCount>=observation.video.canDayCount;
+    $('drama-video').textContent=observation?.video.canDayCount>0 && observation.video.doneDayCount>=observation.video.canDayCount?'今日已完成':'观看 5 分钟';
     $('drama-invite').disabled=!account || account.status!=='active' || !model.campaign.active || !observation?.invite.session || posting.has(selected);
     $('drama-membership').disabled=!account || account.status!=='active' || posting.has(selected+':membership');
     const membership=account?.membership;
+    $('drama-membership-status').hidden=!membership;
     $('drama-membership-status').textContent=membership
-      ? (membership.services.length?`已查到 ${membership.services.length} 项相关订购；不等于已确认活动奖励资格。`:'已核对现有业务，未发现爱奇艺或随心看相关订购。')+' '+membership.message
-      : '可核对本号相关订购；活动办理与权益领取接口仍待确认，不自动付费。';
+      ? (membership.services.length?'':'未发现爱奇艺或随心看相关订购。 ')+membership.message
+      : '';
     $('drama-membership-items').replaceChildren(...(membership?.services || []).map(item=>{
       const row=node('li','',item.name);row.append(node('small','',[item.fee,item.status].filter(Boolean).join(' · ')||'官方未提供资费或状态'));return row;
     }));
     $('drama-all').disabled=!model.campaign.active || posting.has('all');
-    $('drama-run-status').textContent=account?.running
-      ? (account.records[0]?.state==='running'?account.records[0].message:'任务已排队或正在执行，结果将自动核对。')
-      : account?.pending?'上次提交结果待核实，请刷新查询。':account?.records[0]?.message || '自动执行已接通的免费任务；付费、邀请领奖需单独处理。';
+    const latest=account?.records[0];
+    const runStatus=account?.running
+      ? (latest?.state==='running'?latest.message:'任务已排队或正在执行。')
+      : account?.pending?'提交结果待核实，请刷新进度。':latest?.state==='error' || latest?.state==='uncertain'?latest.message:'';
+    $('drama-run-status').textContent=runStatus;
+    $('drama-run-status').hidden=!runStatus;
     renderObservation(account);
     const records=account?.records || [];
     $('drama-records').replaceChildren(...(records.length?records.slice(0,20).map(record=>{
@@ -148,7 +171,7 @@
       model=await api('/status');
       const changed=!model.accounts.some(a=>a.id===selected);
       if (changed) {
-        selected=(model.accounts.find(a=>a.status==='active') || model.accounts[0])?.id || ''; rendered='';
+        selected=(model.accounts.find(a=>a.status==='active') || model.accounts[0])?.id || ''; rendered=''; $('drama-completed').open=false;
         confirmation=null;inviteOwner='';$('drama-confirm').close();$('drama-share').close();
       }
       render();

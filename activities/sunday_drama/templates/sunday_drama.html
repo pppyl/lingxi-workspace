@@ -12,29 +12,47 @@
 </head>
 <body class="workspace-app" data-workspace="sunday-drama">
 <main class="portal-shell drama-shell">
-  <header class="drama-heading"><div><span class="drama-eyebrow">短期活动 · 每周日抽奖</span><h1>周日追剧盛宴</h1><p id="drama-period">正在读取活动规则…</p></div><div class="drama-actions"><button id="drama-refresh" class="secondary" type="button">刷新进度</button><button id="drama-settings-open" class="secondary" type="button">自动设置</button><button id="drama-all" class="primary" type="button">全部账号执行</button></div></header>
+  <header class="drama-heading">
+    <h1>周日追剧盛宴</h1>
+    <div class="drama-actions"><button id="drama-refresh" class="secondary" type="button">刷新进度</button><button id="drama-settings-open" class="secondary" type="button">自动设置</button><button id="drama-all" class="secondary" type="button">全部账号执行</button></div>
+  </header>
   <p id="drama-announcement" class="drama-notice" hidden></p><p id="drama-feedback" class="drama-feedback" role="status" aria-live="polite" hidden></p>
   <label class="drama-mobile-account" for="drama-account-select">共享账号<select id="drama-account-select"></select></label>
   <div class="drama-layout">
-    <aside class="workspace-account-rail drama-panel drama-account-panel" aria-label="共享账号"><div class="drama-account-heading"><h2>共享账号 <span id="drama-account-count">—</span></h2><button type="button" class="quiet" data-account-window>管理</button></div><div id="drama-accounts" class="workspace-account-list"></div><p class="drama-muted">与其他功能共用登录</p></aside>
+    <aside class="workspace-account-rail drama-panel drama-account-panel" aria-label="共享账号"><div class="drama-account-heading"><h2>共享账号 <span id="drama-account-count">—</span></h2><button type="button" class="quiet" data-account-window>管理</button></div><div id="drama-accounts" class="workspace-account-list"></div></aside>
     <div id="drama-content" class="drama-content" aria-busy="false">
-      <section class="drama-panel drama-hero" aria-labelledby="drama-current-account">
-        <div class="drama-hero-top"><div><p id="drama-current-account">请选择账号</p><h2>攒机会，周日抽好礼</h2><p id="drama-draw-window" class="drama-muted">抽奖机会每周一 00:00 清零</p></div><span class="drama-play-icon" aria-hidden="true"><svg viewBox="0 0 40 40"><rect x="5" y="9" width="30" height="25" rx="7"/><path d="m15 4 5 5 5-5 M17 16l9 6-9 6z"/></svg></span></div>
-        <dl class="drama-metrics"><div><dt>剩余抽奖机会</dt><dd><strong id="drama-remain">—</strong><small>次</small></dd></div><div><dt>今日视频任务</dt><dd id="drama-video-day">—</dd></div><div><dt>本周视频任务</dt><dd id="drama-video-week">—</dd></div></dl>
-        <div class="drama-hero-bottom"><p id="drama-run-status" role="status">先查询官方进度，再执行任务。</p><div class="drama-actions"><button id="drama-run" class="primary" type="button" disabled>完成可做任务</button><button id="drama-draw" class="secondary" type="button" disabled>周日抽奖</button></div></div>
+      <section class="drama-panel drama-hero" aria-label="抽奖与视频进度">
+        <div class="drama-overview-item">
+          <div><h2>剩余抽奖机会</h2><p class="drama-remaining"><strong id="drama-remain">—</strong> 次</p></div>
+          <button id="drama-draw" class="primary" type="button" disabled>周日抽奖</button>
+          <p id="drama-draw-window" class="drama-muted drama-overview-note">周日开放 · 周一 00:00 清零</p>
+        </div>
+        <div class="drama-overview-item drama-video-overview">
+          <div><h2>视频任务</h2><dl class="drama-metrics"><div><dt>今日</dt><dd id="drama-video-day">—</dd></div><div><dt>本周</dt><dd id="drama-video-week">—</dd></div></dl></div>
+          <button id="drama-video" class="secondary" type="button" disabled>观看 5 分钟</button>
+        </div>
+        <p id="drama-run-status" role="status" hidden></p>
       </section>
       <div class="drama-grid">
-        <section class="drama-panel"><header class="drama-panel-heading"><div><h2>每周领机会任务</h2><p>已完成任务不重复提交，未接通任务展示具体原因。</p></div><span id="drama-task-count" class="count-chip">—</span></header><ul id="drama-tasks" class="drama-task-list"><li class="drama-empty">正在读取该账号任务…</li></ul></section>
+        <section class="drama-panel">
+          <header class="drama-panel-heading"><h2>每周任务 <span id="drama-task-count" class="count-chip" aria-label="完成进度">—</span></h2><button id="drama-run" class="primary" type="button" disabled>完成可做任务</button></header>
+          <ul id="drama-tasks" class="drama-task-list"><li class="drama-empty">正在读取任务…</li></ul>
+          <details id="drama-completed" class="drama-completed" hidden><summary id="drama-completed-label">已完成任务</summary><ul id="drama-completed-tasks" class="drama-task-list"></ul></details>
+        </section>
         <div class="drama-side-stack">
-          <section class="drama-panel"><header class="drama-panel-heading"><div><h2>看视频领机会</h2><p>实际播放满 5 分钟后核对结果</p></div></header><div class="drama-panel-body"><p id="drama-video-summary" class="drama-muted">周一至周六每天 1 次，周日 2 次。</p><button id="drama-video" class="secondary drama-wide" type="button" disabled>执行 5 分钟视频任务</button></div></section>
-          <section class="drama-panel"><header class="drama-panel-heading"><div><h2>邀请好友得奖品</h2><p>邀请本月未登录中国移动 APP 的好友</p></div></header><div class="drama-panel-body"><p class="drama-invite-progress">本月已成功邀请 <strong id="drama-invite-count">—</strong> 人</p><ul id="drama-invite-rewards" class="drama-reward-list"></ul><p class="drama-muted">3、5、7 人对应不同奖励，每月只能选择一档领取。</p><button id="drama-invite" class="secondary drama-wide" type="button" disabled>获取邀请口令与海报</button></div></section>
-          <section class="drama-panel"><header class="drama-panel-heading"><div><h2>签到与会员福利</h2></div></header><div class="drama-panel-body"><p id="drama-signin-state" class="drama-muted">正在读取官方公告…</p><p id="drama-membership-status" class="drama-muted">可核对本号相关订购；活动办理与权益领取接口仍待确认，不自动付费。</p><ul id="drama-membership-items" class="drama-reward-list"></ul><button id="drama-membership" class="secondary drama-wide" type="button">查询现有订购</button></div></section>
+          <section class="drama-panel">
+            <header class="drama-panel-heading"><h2>邀请奖励</h2><p class="drama-muted">本月已邀请 <strong id="drama-invite-count">—</strong> 人</p></header>
+            <div class="drama-panel-body"><ul id="drama-invite-rewards" class="drama-reward-list"></ul><div class="drama-invite-footer"><p class="drama-muted">每月可选一档领取</p><button id="drama-invite" class="secondary" type="button" disabled>获取邀请口令与海报</button></div></div>
+          </section>
+          <section class="drama-panel"><header class="drama-panel-heading"><h2>活动奖品</h2><a href="/coupons">我的卡券 ↗</a></header><ul id="drama-prizes" class="drama-prize-list"><li class="drama-empty">查询后查看奖品。</li></ul></section>
+        </div>
+        <div class="drama-details-stack">
+          <details class="drama-panel drama-details"><summary>执行记录</summary><ol id="drama-records"></ol></details>
+          <details class="drama-panel drama-details"><summary>签到与会员福利</summary><div class="drama-details-body"><p id="drama-signin-state" class="drama-muted"></p><p id="drama-membership-status" class="drama-muted" role="status" hidden></p><ul id="drama-membership-items" class="drama-reward-list"></ul><button id="drama-membership" class="secondary" type="button" disabled>查询现有订购</button></div></details>
+          <details class="drama-panel drama-details"><summary>活动规则</summary><div class="drama-details-body"><p id="drama-period" class="drama-muted"></p><p id="drama-rules" class="drama-rules"></p></div></details>
         </div>
       </div>
-      <section class="drama-panel drama-prizes"><header class="drama-panel-heading"><div><h2>我的活动奖品</h2><p>仅展示官方返回的中奖记录</p></div><a href="/coupons">我的卡券 ↗</a></header><ul id="drama-prizes" class="drama-prize-list"><li class="drama-empty">查询后查看奖品。</li></ul></section>
-      <details class="drama-panel drama-details"><summary>执行记录</summary><ol id="drama-records"></ol></details>
-      <details class="drama-panel drama-details"><summary>完整活动规则</summary><p id="drama-rules" class="drama-rules"></p></details>
-      <p id="drama-sync" class="drama-muted drama-sync">北京时间 · 页面定时刷新本地记录</p>
+      <p id="drama-sync" class="drama-muted drama-sync" hidden></p>
     </div>
   </div>
 </main>

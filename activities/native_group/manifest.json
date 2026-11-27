@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "id": "native-group",
+  "version": "1.0.0",
+  "title": "APP 通话组队",
+  "module": "activities.native_group.plugin",
+  "home": "/native-group",
+  "temporary": true,
+  "navigation": "main"
+}
