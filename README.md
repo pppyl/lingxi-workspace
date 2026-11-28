@@ -146,6 +146,8 @@ Android 独立版的本地服务仅供手机应用使用。Windows 和 Android �
 
 ## 开发与构建
 
+测试目录仅在本地维护，发布前照常进行本地回归；GitHub 当前源码与客户端安装包不包含测试目录。
+
 内置业务的 Python 实现在 `features/` 下按工作台菜单分目录。周三充值日使用独立应用目录 `recharge/`，可安装的活动包位于 `activities/`。业务协议说明见 `docs/protocols/`。
 
 - Windows x64 使用 Python 3.12。安装 `requirements-desktop.txt` 后运行 `python build_tools/build_windows.py`，产物位于 `release/`。

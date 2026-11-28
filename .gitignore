@@ -8,6 +8,11 @@ tools/*-install.json
 tools/frida*
 node_modules/
 
+# Tests remain available locally and are not synchronized to GitHub.
+test/
+tests/
+androidTest/
+
 tools/android-static/
 tools/python-re/
 tools/lingxi-uia-fast.jar
