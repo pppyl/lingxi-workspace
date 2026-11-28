@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/mobile.css?v=mobile-1">
   <script src="/static/account-window.js" defer></script><script src="/static/workspace.js" defer></script>
   <script src="/static/mobile.js?v=mobile-1" defer></script>
-  <script src="/activities/native-group/static/native-group.js?v=call-setup-1" defer></script>
+  <script src="/activities/native-group/static/native-group.js?v=auth-repair-1" defer></script>
 </head>
 <body class="workspace-app" data-workspace="native-group">
 <main class="page ng-page">
@@ -25,7 +25,7 @@
       </section>
       <div class="ng-bottom-grid"><section class="ng-panel"><header class="ng-section-heading"><h2>做任务抽奖</h2><span id="ng-draw-count" class="ng-muted">— 次机会</span></header><ul id="ng-tasks" class="ng-list"></ul><div class="ng-actions ng-draw-actions"><button id="ng-prepare" class="secondary" disabled>准备抽奖认证</button><button id="ng-draw" class="primary" disabled>立即抽奖</button></div><p class="ng-note">每天最多抽奖 2 次。真实通话可在上方手动完成并同步，任务与奖品以官方核对结果为准。</p></section>
         <section class="ng-panel"><header class="ng-section-heading"><h2>我的奖品</h2><a href="/coupons">我的卡券 ↗</a></header><ul id="ng-prizes" class="ng-list"><li class="ng-muted">查询后显示官方奖品记录。</li></ul></section></div>
-      <details class="ng-panel ng-details"><summary>活动规则与参与条件</summary><p class="ng-note">安卓须首次设置中国移动 APP 为默认通话应用，并在入队后完成不少于 5 秒的有效通话。iOS 须完成端内有效通话。通话按现行套餐计费。</p><div id="ng-rules" class="ng-rules">选择账号查询后读取官方规则。</div></details>
+      <details class="ng-panel ng-details"><summary>活动规则与参与条件</summary><p class="ng-note">安卓须首次设置中国移动 APP 为默认通话应用，并在入队后完成不少于 5 秒的有效通话；通话已完成但授权未确认时可单独补齐，无需重拨。iOS 无需默认电话授权，须完成端内有效通话。领奖以官方全队达标及个人可领取状态为准。通话按现行套餐计费。</p><div id="ng-rules" class="ng-rules">选择账号查询后读取官方规则。</div></details>
       <details class="ng-panel ng-details"><summary>操作记录</summary><ul id="ng-records" class="ng-list"></ul></details>
       <p id="ng-checked" class="ng-muted"></p>
     </section>

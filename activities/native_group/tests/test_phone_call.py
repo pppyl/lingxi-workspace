@@ -99,6 +99,86 @@ class ManualPhoneCallTests(unittest.TestCase):
         self.assertTrue(self.manager.status()['call_authorization_available'])
         self.assertNotIn('call_context', self.manager.status())
 
+    def test_completed_call_does_not_skip_missing_android_authorization(self):
+        self.manager.data['call_context'] = {'device_id': 'verified-device'}
+        self.client.inspect.side_effect = [call_observation(done=True, authorized=False), call_observation(done=True)]
+        with patch('activities.native_group.scheduler.sync_existing_authorization',
+                   side_effect=lambda snapshot, context, before_submit: before_submit()) as authorize:
+            result = self.manager.run('a', 'call_prepare', destination='13800138001')
+        authorize.assert_called_once()
+        self.sender.assert_not_called()
+        self.client.operate.assert_not_called()
+        self.assertFalse(self.manager.data['phone_calls'])
+        self.assertEqual(result['accounts'][0]['auth_sync']['state'], 'confirmed')
+
+    def test_refresh_repairs_completed_calls_authorization_once_using_existing_context(self):
+        self.manager.data['call_context'] = {'device_id': 'verified-device'}
+        self.client.inspect.return_value = call_observation(done=True, authorized=False)
+        def authorize(snapshot, context, *, before_submit):
+            before_submit()
+            self.client.inspect.return_value = call_observation(done=True)
+        with patch('activities.native_group.scheduler.sync_existing_authorization', side_effect=authorize) as sync:
+            self.manager.run('a')
+            self.manager.run('a')
+            self.manager.run('a', 'call_authorize')
+        sync.assert_called_once()
+        self.sender.assert_not_called()
+
+    def test_unknown_authorization_repair_keeps_completed_call_and_never_replays_after_restart(self):
+        self.manager.data['call_context'] = {'device_id': 'verified-device'}
+        self.client.inspect.return_value = call_observation(done=True, authorized=False)
+        self.manager.data['phone_calls']['a'] = {'id': 'completed-call', 'stage': 'confirmed'}
+        def authorize(snapshot, context, *, before_submit):
+            before_submit()
+            raise CheckinError('unknown', 'RESULT_UNCERTAIN', uncertain=True)
+        with patch('activities.native_group.scheduler.sync_existing_authorization', side_effect=authorize) as sync:
+            result = self.manager.run('a')
+            self.assertEqual(result['accounts'][0]['auth_sync']['state'], 'pending')
+            restarted = GroupScheduler(self.accounts, self.factory, self.storage, now=self.now)
+            restarted.run('a')
+            self.assertEqual(restarted.data['phone_calls']['a']['stage'], 'confirmed')
+            self.client.inspect.return_value = call_observation(done=True)
+            restarted.run('a')
+        sync.assert_called_once()
+        self.sender.assert_not_called()
+        self.assertFalse(restarted.data['pending'])
+
+    def test_failed_authorization_repair_does_not_reject_a_completed_call_and_requires_explicit_retry(self):
+        self.manager.data['call_context'] = {'device_id': 'verified-device'}
+        self.client.inspect.return_value = call_observation(done=True, authorized=False)
+        self.manager.data['phone_calls']['a'] = {'id': 'completed-call', 'stage': 'confirmed'}
+        def reject(snapshot, context, *, before_submit):
+            before_submit()
+            error = CheckinError('not accepted', 'CALL_AUTH_REJECTED', 409)
+            error.definitive_rejection = True
+            raise error
+        with patch('activities.native_group.scheduler.sync_existing_authorization', side_effect=reject) as sync:
+            self.manager.run('a')
+            self.manager.run('a')
+            self.assertEqual(self.manager.data['auth_sync']['a']['state'], 'failed')
+            self.assertEqual(self.manager.data['phone_calls']['a']['stage'], 'confirmed')
+            sync.assert_called_once()
+            def accept(snapshot, context, *, before_submit):
+                before_submit()
+                self.client.inspect.return_value = call_observation(done=True)
+            sync.side_effect = accept
+            result = self.manager.run('a', 'call_authorize')
+        self.assertEqual(result['accounts'][0]['auth_sync']['state'], 'confirmed')
+        self.sender.assert_not_called()
+
+    def test_ios_completed_call_needs_no_default_dialer_authorization_and_clears_obsolete_wait(self):
+        state = call_observation(done=True, authorized=False)
+        state['campaign']['userGroupInfo']['groupMembers'][0]['osType'] = 'ios'
+        self.client.inspect.return_value = state
+        self.manager.data['pending']['a'] = {'kind': 'call_authorize'}
+        with patch('activities.native_group.scheduler.sync_existing_authorization') as authorize:
+            result = self.manager.run('a')
+            self.manager.run('a', 'call_prepare', destination='13800138001')
+        self.assertEqual(result['accounts'][0]['auth_sync']['state'], 'not_required')
+        self.assertFalse(self.manager.data['pending'])
+        authorize.assert_not_called()
+        self.sender.assert_not_called()
+
     def test_uncertain_authorization_survives_restart_without_replay_or_dial_draft(self):
         self.manager.data['call_context'] = {'device_id': 'verified-device'}
         self.client.inspect.return_value = call_observation(authorized=False)

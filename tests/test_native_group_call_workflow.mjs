@@ -19,13 +19,13 @@ class Element {
   reportValidity(){return /^1[3-9][0-9]{9}$/.test(this.number.value);}
 }
 const flush=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
-async function fixture({done=false,authorized=true,canAuthorize=false,empty=false,initialPaused=false,autoEnabled=true,legacyTemplate=false,autoSetup=false}={}){
+async function fixture({done=false,authorized=true,canAuthorize=false,empty=false,initialPaused=false,autoEnabled=true,legacyTemplate=false,autoSetup=false,platform='android'}={}){
   const elements=new Map(),calls=[],location={href:''},windowHandlers={};
   const get=id=>{assert.ok(ids.has(id),'Unknown template element '+id);if(legacyTemplate&&['ng-auto-claim','ng-call-role-confirmed','ng-call-role-confirmation','ng-call-authorization-info'].includes(id))return null;if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
   get('ng-call-dial-form').number=get('ng-call-number');
   const accounts=['a','b'].map(id=>({id,name:'账号'+id,phone_masked:'138****800'+id,status:'active',records:[],observation:{
     identity:{phone:'138****800'+id},campaign:{showGroup:true,drawTimes:0,userGroupInfo:{groupSize:3,
-      groupMembers:[{phone:'138****800'+id,authTaskStatus:authorized?'1':null,callTaskStatus:done?'1':null}]}},
+      groupMembers:[{phone:'138****800'+id,osType:platform,authTaskStatus:authorized?'1':null,callTaskStatus:done?'1':null}]}},
     tasks:[],prizes:[],checked_at:'2026-11-28T09:00:00+08:00'}}));
   const model={accounts,campaign:{start_at:'2026-11-24',end_at:'2026-12-31',ended:false},rules:'rules',call_authorization_available:canAuthorize,auto_claim_enabled:autoEnabled,call_context_auto_setup:autoSetup};
   const samples=structuredClone(accounts);
@@ -253,4 +253,58 @@ test('an uncertain first-setup response reloads local pending state and never op
   assert.equal(f.get('ng-call-dial').disabled,true);
   assert.equal(f.get('ng-call-sync').disabled,true);
   assert.match(f.get('ng-call-message').textContent,/待核实/);
+});
+
+test('completed Android calls keep the missing-authorization repair entry without offering another dial',async()=>{
+  const f=await fixture({done:true,authorized:false,canAuthorize:true});
+  assert.equal(f.get('ng-call-open').disabled,false);
+  assert.match(f.get('ng-call-open').textContent,/补齐通话授权/);
+  f.get('ng-call-open').click();
+  assert.equal(f.get('ng-call-dial-form').hidden,true);
+  assert.equal(f.get('ng-call-dial').disabled,true);
+  assert.equal(f.get('ng-call-authorization').hidden,false);
+  assert.match(f.get('ng-call-message').textContent,/无需再次拨打/);
+  await f.get('ng-call-authorize').click();
+  assert.deepEqual(f.calls.filter(call=>call.body).map(call=>call.body),[
+    {login_id:'a',kind:'call_authorize',confirmed:true}]);
+  assert.equal(f.get('ng-call-open').disabled,true);
+  assert.equal(f.location.href,'');
+});
+
+test('completed calls can configure and repair authorization on a clean computer without a target number',async()=>{
+  const f=await fixture({done:true,authorized:false,autoSetup:true});
+  f.get('ng-call-open').click();
+  assert.equal(f.get('ng-call-authorization').hidden,false);
+  assert.equal(f.get('ng-call-role-confirmation').hidden,false);
+  assert.equal(f.get('ng-call-dial-form').hidden,true);
+  f.get('ng-call-role-confirmed').checked=true;f.get('ng-call-role-confirmed').handlers.change();
+  await f.get('ng-call-authorize').click();
+  assert.deepEqual(f.calls.filter(call=>call.body).map(call=>call.body),[
+    {login_id:'a',kind:'call_authorize',confirmed:true,existing_role_confirmed:true}]);
+  assert.equal(f.location.href,'');
+});
+
+test('iOS authorization is shown as not required and officially ready teams can claim',async()=>{
+  const f=await fixture({done:true,authorized:false,platform:'ios'});
+  const campaign=f.accounts[0].observation.campaign;
+  campaign.showGroup=false;campaign.groupPrizeBtnStatus='1';campaign.userGroupInfo.groupTaskStatus=2;
+  campaign.userGroupInfo.groupMembers.push(...['b','c'].map(phone=>({phone,osType:'ios',authTaskStatus:null,callTaskStatus:'1'})));
+  f.windowHandlers['accounts-changed']();await flush();
+  assert.equal(f.get('ng-done-count').textContent,3);
+  assert.equal(f.get('ng-claim').disabled,false);
+  assert.equal(f.get('ng-call-open').disabled,true);
+  for(const row of f.get('ng-members').children)assert.match(row.children[1].textContent,/无需此项/);
+  assert.ok(f.calls.every(call=>!call.body));
+});
+
+test('official team eligibility enables claiming even while Android member authorization details lag',async()=>{
+  const f=await fixture({done:true,authorized:false});
+  const campaign=f.accounts[0].observation.campaign;
+  campaign.groupPrizeBtnStatus='1';campaign.userGroupInfo.groupTaskStatus=2;
+  campaign.userGroupInfo.groupMembers.push(...['b','c'].map(phone=>({phone,osType:'android',authTaskStatus:null,callTaskStatus:'1'})));
+  f.windowHandlers['accounts-changed']();await flush();
+  assert.equal(f.get('ng-claim').disabled,false);
+  assert.match(f.get('ng-auto-claim').textContent,/明细待更新/);
+  for(const row of f.get('ng-members').children)assert.equal(row.children[1].textContent,'待官方确认');
+  assert.ok(f.calls.every(call=>!call.body));
 });

@@ -65,12 +65,8 @@ class AutomaticAwardTests(unittest.TestCase):
         self.manager.run('a')
         self.clients['a'].operate.assert_not_called()
 
-    def test_every_member_and_the_current_account_must_be_officially_confirmed(self):
+    def test_official_team_readiness_and_current_membership_are_required(self):
         cases = []
-        for field in ('authTaskStatus', 'callTaskStatus'):
-            state = ready_observation()
-            state['campaign']['userGroupInfo']['groupMembers'][1][field] = None
-            cases.append(state)
         for task in (0, '0', None):
             state = ready_observation()
             state['campaign']['userGroupInfo']['groupTaskStatus'] = task
@@ -86,6 +82,107 @@ class AutomaticAwardTests(unittest.TestCase):
                 with self.assertRaises(CheckinError):
                     client.operate(Mock(), {}, 'claim', state, before_submit=Mock())
                 client._call.assert_not_called()
+
+    def test_officially_ready_team_is_not_blocked_by_stale_member_details(self):
+        for state in self.states.values():
+            state['campaign']['userGroupInfo']['groupTaskStatus'] = 2
+            for member in state['campaign']['userGroupInfo']['groupMembers']:
+                member.update(authTaskStatus=None, callTaskStatus='1')
+        with patch('activities.native_group.scheduler.sync_existing_authorization') as authorize:
+            result = self.manager.run('a')
+        self.assertEqual(result['accounts'][0]['auto_claim']['state'], 'confirmed')
+        self.clients['a'].operate.assert_called_once()
+        authorize.assert_not_called()
+        members = result['accounts'][0]['observation']['campaign']['userGroupInfo']['groupMembers']
+        self.assertTrue(all(member['authTaskStatus'] is None for member in members))
+
+    def test_official_readiness_retires_old_authorization_wait_without_faking_member_authorization(self):
+        state = self.states['a']
+        for member in state['campaign']['userGroupInfo']['groupMembers']:
+            member.update(osType='android', authTaskStatus=None)
+        self.manager.data['pending']['a'] = {'kind': 'call_authorize'}
+        with patch('activities.native_group.scheduler.sync_existing_authorization') as authorize:
+            result = self.manager.run('a')
+        authorize.assert_not_called()
+        self.clients['a'].operate.assert_called_once()
+        self.assertIsNone(result['accounts'][0]['pending'])
+        self.assertEqual(result['accounts'][0]['auth_sync']['state'], 'details_pending')
+        self.assertTrue(all(member['authTaskStatus'] is None for member in
+            result['accounts'][0]['observation']['campaign']['userGroupInfo']['groupMembers']))
+
+    def test_official_readiness_never_retires_an_uncertain_award_submission(self):
+        state = self.states['a']
+        for member in state['campaign']['userGroupInfo']['groupMembers']:
+            member.update(osType='android', authTaskStatus=None)
+        self.manager.data['pending']['a'] = {'kind': 'claim', 'automatic': True}
+        result = self.manager.run('a')
+        self.assertEqual(result['accounts'][0]['pending']['kind'], 'claim')
+        self.clients['a'].operate.assert_not_called()
+
+    def test_ios_team_with_no_default_dialer_authorization_can_claim_when_officially_ready(self):
+        for state in self.states.values():
+            state['campaign']['showGroup'] = False
+            for member in state['campaign']['userGroupInfo']['groupMembers']:
+                member.update(osType='ios', authTaskStatus=None)
+        self.manager.data['pending']['a'] = {'kind': 'call_authorize'}
+        with patch('activities.native_group.scheduler.sync_existing_authorization') as authorize:
+            result = self.manager.run('a')
+        self.assertEqual(result['accounts'][0]['auto_claim']['state'], 'confirmed')
+        authorize.assert_not_called()
+
+    def test_claim_endpoint_allows_officially_ready_ios_without_android_qualification_flag(self):
+        state = ready_observation()
+        state['campaign']['showGroup'] = False
+        for member in state['campaign']['userGroupInfo']['groupMembers']:
+            member.update(osType='ios', authTaskStatus=None)
+        client = NativeGroupClient(Mock(), credential_cache=Mock())
+        client._call = Mock(return_value={})
+        before = Mock()
+        client.operate('session', {'phone': 'synthetic-account'}, 'claim', state, before_submit=before)
+        self.assertEqual(client._call.call_args.args[1], 'redeemGroupAward')
+        for member in state['campaign']['userGroupInfo']['groupMembers']:
+            member['osType'] = 'android'
+        self.assertFalse(award_ready(state))
+
+    def test_ios_background_keeps_checking_until_official_team_status_becomes_ready(self):
+        state = self.states['a']
+        state['campaign']['showGroup'] = False
+        state['campaign']['userGroupInfo']['groupTaskStatus'] = 0
+        for member in state['campaign']['userGroupInfo']['groupMembers']:
+            member.update(osType='ios', authTaskStatus=None)
+        self.manager._save_observation('a', state)
+        self.manager.tick()
+        self.clients['a'].operate.assert_not_called()
+        self.now += timedelta(minutes=1)
+        state['campaign']['userGroupInfo']['groupTaskStatus'] = 2
+        self.manager.tick()
+        self.clients['a'].operate.assert_called_once()
+
+    def test_all_owned_android_members_missing_authorization_are_repaired_then_claimed_without_calls(self):
+        self.accounts.extend({'id': key, 'status': 'active'} for key in ('b', 'c'))
+        self.manager.data['call_context'] = {'device_id': 'verified-device', 'xk': 'verified-key'}
+        for key, state in self.states.items():
+            state['campaign']['userGroupInfo']['groupTaskStatus'] = 0
+            for member in state['campaign']['userGroupInfo']['groupMembers']:
+                member.update(osType='android', authTaskStatus=None)
+            self.manager._save_observation(key, state)
+        def authorize(snapshot, context, *, before_submit):
+            before_submit()
+            key = snapshot['phone'].removeprefix('account-')
+            for state in self.states.values():
+                group = state['campaign']['userGroupInfo']
+                next(member for member in group['groupMembers'] if member['phone'] == 'synthetic-' + key)['authTaskStatus'] = '1'
+                if all(member['authTaskStatus'] == '1' for member in group['groupMembers']):
+                    group['groupTaskStatus'] = 2
+        with patch('activities.native_group.scheduler.sync_existing_authorization', side_effect=authorize) as sync:
+            with patch('activities.native_group.scheduler.sync_confirmed_call') as call:
+                self.manager.tick()
+                self.manager.tick()
+            self.assertEqual(sync.call_count, 3)
+            call.assert_not_called()
+        for client in self.clients.values():
+            client.operate.assert_called_once()
+        self.assertTrue(all(self.manager.data['auto_claims'][key]['state'] == 'confirmed' for key in ('a', 'b', 'c')))
 
     def test_automatic_claim_uses_official_award_endpoint_and_does_not_fabricate_prizes(self):
         snapshot = {'phone': 'synthetic-account'}

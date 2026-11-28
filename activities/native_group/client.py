@@ -20,17 +20,21 @@ MESSAGES = {'10002': '官方确认该号码不在本次目标范围内。', '100
             '10008': '该号码已经在队伍中。', '10019': '该号码已经参加过组队。'}
 
 
+def requires_authorization(member):
+    return member.get('osType') != 'ios'
+
+
 def award_ready(state):
     campaign = state.get('campaign') or {}
     group = campaign.get('userGroupInfo') or {}
     members = group.get('groupMembers', [])
     task_status = str(group.get('groupTaskStatus'))
-    return (bool(campaign.get('showGroup')) and str(campaign.get('groupPrizeBtnStatus')) == '1'
+    phone = (state.get('identity') or {}).get('phone')
+    own = next((row for row in members if row.get('phone') == phone), {})
+    return (bool(phone) and bool(own) and (bool(campaign.get('showGroup')) or not requires_authorization(own))
+            and str(campaign.get('groupPrizeBtnStatus')) == '1'
             and group.get('groupSize') in {3, 5, 10} and len(members) == group['groupSize']
-            and task_status.isdigit() and int(task_status) > 0
-            and (state.get('identity') or {}).get('phone') in {row.get('phone') for row in members}
-            and all(str(row.get('authTaskStatus')) == '1' and str(row.get('callTaskStatus')) == '1'
-                    for row in members))
+            and task_status.isdigit() and int(task_status) > 0)
 
 
 def invite_token(value):
@@ -151,6 +155,10 @@ class NativeGroupClient(CheckinClient):
     def operate(self, client, snapshot, kind, state, *, size=None, token=None, before_submit):
         campaign = state['campaign']
         group = campaign.get('userGroupInfo')
+        if kind == 'claim':
+            if not award_ready(state):
+                raise CheckinError('官方尚未确认全队满员并完成任务。', 'AWARD_NOT_READY', 409)
+            return self._call(client, 'redeemGroupAward', {}, snapshot=snapshot, before_submit=before_submit)
         if kind == 'draw':
             if (not isinstance(campaign.get('drawTimes'), int) or campaign['drawTimes'] <= 0
                     or int(campaign.get('todayAlreadyDrawTimes') or 0) >= 2):
@@ -175,10 +183,6 @@ class NativeGroupClient(CheckinClient):
             if len(members) != 1 or members[0].get('phone') != state['identity']['phone']:
                 raise CheckinError('官方仅允许尚未邀请队员的创建人退队。', 'QUIT_UNAVAILABLE', 409)
             path, body = 'quitGroup', {}
-        elif kind == 'claim':
-            if not award_ready(state):
-                raise CheckinError('官方尚未确认全队满员并完成任务。', 'AWARD_NOT_READY', 409)
-            path, body = 'redeemGroupAward', {}
         elif kind == 'invite':
             self._current(snapshot)
             config = self._call(client, 'shareTextInfo')
