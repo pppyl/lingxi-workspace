@@ -1,4 +1,4 @@
-"""Removable APP calling-team activity with local confirmation and readback."""
+"""Removable APP calling-team activity with unattended protocol completion."""
 from flask import Blueprint, jsonify, render_template, request
 
 from features.checkin.client import CheckinError
@@ -74,7 +74,7 @@ def register(app, credentials, accounts, storage):
         value = request.get_json(silent=True)
         if (not isinstance(value, dict) or not isinstance(value.get('login_id'), str)
                 or value.get('kind') not in {'create', 'join', 'quit', 'claim', 'invite', 'draw', 'prepare',
-                                              'call_prepare', 'call_confirm', 'call_authorize'}
+                                              'call_authorize', 'call_execute'}
                 or value.get('confirmed') is not True):
             raise CheckinError('请确认当前账号和操作。', 'CONFIRM_REQUIRED', 400)
         return jsonify(controller.scheduler.run(value['login_id'], value['kind'],

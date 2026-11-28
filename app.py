@@ -30,13 +30,12 @@ from features.monthly_coupon.auth import MonthlyCouponAuthError
 from features.monthly_coupon.client import MonthlyCouponClient
 from features.monthly_coupon.scheduler import MonthlyCouponScheduler, MonthlyTaskError
 from features.star_day.client import StarDayError
-from features.star_day.auth import StarDayAuthError
 from features.star_day.scheduler import StarDayScheduler
 from workspace.accounts.credentials import CredentialCache
 from workspace.platform_manager import PACKAGE_UPLOAD_PATH, PlatformManager
 from workspace.feature_control import FeatureControl
 import activities
-from features.coupons.client import CouponError, SORTS as COUPON_SORTS
+from features.coupons.client import CouponError
 from features.coupons.use import CouponUseManager
 from features.coupons.native_device import NativeRechargeDevices
 from features.coupons.native_captcha import RechargeCaptcha
@@ -46,6 +45,11 @@ from runtime_paths import DATA_DIR,RECHARGE_DATA_DIR,prepare_runtime_data
 from workspace.access_security import AccessGate, register_access
 from workspace.update_checker import register_updates
 from workspace.network_access import register_network
+from features.monthly_coupon.routes import register_monthly_coupon_routes
+from features.star_day.routes import register_star_day_routes
+from features.lingxi.routes import register_lingxi_tasks_routes
+from features.checkin.routes import register_checkin_routes
+from features.coupons.routes import register_coupons_routes
 
 
 def create_app(*, enable_recharge=False, recharge_manager=None, recharge_scheduler=None, database_path=None, recharge_data_dir=None):
@@ -307,72 +311,12 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         account()
         return render_template('index.html')
 
-    @app.get('/lingxi/tasks')
-    def lingxi_tasks_page():
-        return render_template('lingxi_tasks.html')
-
-    @app.get('/checkin')
-    def checkin_page():
-        return render_template('checkin.html')
-
-    @app.get('/monthly-coupon')
-    def monthly_coupon_page():
-        return render_template('monthly_coupon.html')
-
-    @app.errorhandler(MonthlyTaskError)
-    @app.errorhandler(MonthlyCouponAuthError)
-    def monthly_coupon_error(error):
-        return jsonify(error=str(error)), error.status
-
-    @app.get('/api/monthly-coupon/status')
-    def monthly_coupon_status():
-        return jsonify(monthly_scheduler.status())
-
-    @app.post('/api/monthly-coupon/run')
-    def run_monthly_coupon():
-        return jsonify(message=monthly_scheduler.run(request.get_json().get('login_ids')))
-
-    @app.post('/api/monthly-coupon/settings')
-    def save_monthly_coupon_settings():
-        return jsonify(message=monthly_scheduler.settings(request.get_json()))
-
-    @app.post('/api/monthly-coupon/page')
-    def save_monthly_coupon_page():
-        return jsonify(monthly_scheduler.update_page(request.get_json()))
-
-    @app.errorhandler(CheckinTaskError)
-    def checkin_task_error(error):
-        return jsonify(error=str(error)), error.status
-
-    @app.get('/coupons')
-    def coupons_page():
-        return render_template('coupons.html')
-
-    @app.errorhandler(CouponError)
-    def coupon_error(error):
-        result = {'error':str(error), 'code':error.code}
-        login_id = request.args.get('login_id') or (request.get_json(silent=True) or {}).get('login_id')
-        saved = unified.get_id(login_id)
-        if saved is not None:
-            if error.code == 'APP_SESSION_EXPIRED':
-                unified.mark(saved,'login_required',str(error),expected_revision=error.credential_revision)
-            result['account'] = saved.public()
-        return jsonify(result), error.status
-
-    @app.get('/api/coupons/accounts')
-    def coupon_accounts():
-        return jsonify(accounts=unified.public(), reminders=coupon_reminder_summary())
-
     def notice_snapshots():
         with unified.lock:
             return [{**unified.credentials(saved.id),'id':saved.id} for saved in unified.records.values()]
 
     coupon_notices=CouponNotices(notice_snapshots,credential_cache,database)
     app.extensions['coupon_notices']=coupon_notices
-
-    @app.get('/api/coupons/notices')
-    def notices_status():
-        return jsonify(coupon_notices.get())
 
     def coupon_credentials(login_id):
         with unified.lock:
@@ -407,279 +351,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         recharge_captcha=RechargeCaptcha(devices=coupon_recharge_devices.legacy))
     app.extensions['coupon_uses'] = coupon_uses
 
-    def coupon_reminder_summary():
-        with coupon_uses.lock:
-            submissions = dict(coupon_uses.data)
-        return coupon_uses.reminders.summary([row['id'] for row in unified.public()], submissions)
-
-    @app.post('/api/coupons/use/prepare')
-    def coupon_use_prepare():
-        payload = request.get_json()
-        saved = unified.get_id(payload.get('login_id', ''))
-        if saved is None:
-            raise CouponError('请选择账号及卡券。', 'INVALID_SELECTION', 400)
-        with unified.phone_lock(saved.phone):
-            return jsonify(coupon_uses.prepare(saved.id, payload.get('coupon_id', ''), retry=payload.get('retry', False)))
-
-    @app.post('/api/coupons/use/sms')
-    def coupon_use_sms():
-        return jsonify(coupon_uses.sms(request.get_json().get('operation_id', '')))
-
-    @app.post('/api/coupons/use/confirm')
-    def coupon_use_confirm():
-        payload = request.get_json()
-        return jsonify(coupon_uses.confirm(payload.get('operation_id', ''),
-            sms_code=payload.get('sms_code', ''), charge_amount=payload.get('charge_amount', ''),
-            captcha_token=payload.get('captcha_token', ''), risk_token=payload.get('risk_token', ''),
-            risk_lid=payload.get('risk_lid', ''), prepare_risk=payload.get('prepare_risk', False),
-            browser_user_agent=request.headers.get('User-Agent', '')))
-
-    @app.get('/api/coupons')
-    def coupon_list():
-        login_id = request.args.get('login_id', '')
-        state, sort = request.args.get('state', 'available'), request.args.get('sort', 'default')
-        page = request.args.get('page', '1')
-        if state not in ('available', 'history') or sort not in COUPON_SORTS or not re.fullmatch(r'[1-9]\d{0,3}', page):
-            raise CouponError('卡券筛选或页码无效，请刷新后重试。', 'INVALID_QUERY', 400)
-        saved = unified.get_id(login_id)
-        if saved is None:
-            raise CouponError('请选择共享账号池中的账号。', 'ACCOUNT_NOT_FOUND', 404)
-        with unified.phone_lock(saved.phone):
-            result = coupon_uses.query(login_id, state=state, page=int(page), sort=sort)
-        coupon_uses.bind_pending(login_id, result['items'])
-        result['pending_orders'] = coupon_uses.pending(login_id)
-        result['reminder'] = coupon_reminder_summary()['accounts'].get(login_id)
-        return jsonify(result)
-
-    @app.get('/api/coupons/pending')
-    def coupon_pending():
-        login_id = request.args.get('login_id', '')
-        if unified.get_id(login_id) is None:
-            raise CouponError('请选择共享账号池中的账号。', 'ACCOUNT_NOT_FOUND', 404)
-        return jsonify(pending_orders=coupon_uses.pending(login_id))
-
-    @app.post('/api/coupons/use/payment')
-    def coupon_payment():
-        payload = request.get_json()
-        login_id = payload.get('login_id', '')
-        if unified.get_id(login_id) is None:
-            raise CouponError('请选择共享账号池中的账号。', 'ACCOUNT_NOT_FOUND', 404)
-        result = coupon_uses.payment(login_id, payload.get('order_id', ''),
-                                     refresh=payload.get('refresh', False),
-                                     captcha_token=payload.get('captcha_token', ''))
-        if result.get('state') in ('closed', 'verification_required'):
-            if result.get('state') == 'verification_required':
-                app.extensions['coupon_captcha_app_ids'].add(result['challenge']['app_id'])
-            return jsonify(result)
-        import base64
-        import io
-        import qrcode
-        from qrcode.image.svg import SvgPathImage
-        image = qrcode.make(result['payment_url'], image_factory=SvgPathImage, box_size=8, border=3)
-        output = io.BytesIO()
-        image.save(output)
-        result['qr_image'] = 'data:image/svg+xml;base64,' + base64.b64encode(output.getvalue()).decode()
-        return jsonify(result)
-
     @app.errorhandler(LoginStorageError)
     def account_database_error(error):
         return jsonify(error=str(error)), 503
-
-    @app.get('/api/checkin/status')
-    def checkin_status():
-        if login_id := request.args.get('login_id'):
-            checkin_scheduler.refresh_account(login_id)
-        return jsonify(**checkin_scheduler.status(), team_awards=checkin_teams.award_status())
-
-    @app.route('/api/checkin/beans', methods=['GET', 'POST'])
-    def checkin_bean_rewards():
-        if request.method == 'GET':
-            login_id, kind, item_id, cost = request.args.get('login_id'), None, None, None
-        else:
-            payload = request.get_json(silent=True)
-            if not isinstance(payload, dict):
-                return jsonify(error='请提供要操作的任务或奖品。'), 400
-            login_id, kind = payload.get('login_id'), payload.get('kind')
-            item_id, cost = payload.get('item_id'), payload.get('cost')
-            if (kind not in ('claim', 'redeem') or not isinstance(item_id, str) or not item_id
-                    or kind == 'redeem' and not isinstance(cost, str)):
-                return jsonify(error='请选择并确认要操作的任务或奖品。'), 400
-        if not isinstance(login_id, str) or not login_id:
-            return jsonify(error='请选择共享账号。'), 400
-        try:
-            return jsonify(checkin_beans.run(login_id, kind=kind, item_id=item_id, cost=cost))
-        except CheckinError as error:
-            return jsonify(error=str(error), code=error.code, uncertain=error.uncertain), error.status
-
-    @app.post('/api/checkin/teams/awards')
-    def checkin_team_awards():
-        return jsonify(queued=checkin_teams.queue_awards(immediate=True))
-
-    @app.route('/api/checkin/beans/tasks', methods=['GET', 'POST'])
-    def checkin_bean_tasks():
-        if request.method == 'POST':
-            payload = request.get_json(silent=True)
-            if not isinstance(payload, dict):
-                return jsonify(error='请提供有效的任务执行参数。'), 400
-            login_id = payload.get('login_id')
-            if login_id is not None and (not isinstance(login_id, str) or unified.get_id(login_id) is None):
-                return jsonify(error='请选择有效共享账号。'), 400
-            return jsonify(queued=checkin_beans.queue(login_id))
-        return jsonify(checkin_beans.task_status())
-
-    @app.post('/api/checkin/teams/preview')
-    def preview_checkin_teams():
-        return jsonify(checkin_teams.preview())
-
-    @app.post('/api/checkin/teams/join')
-    def join_checkin_teams():
-        return jsonify(checkin_teams.apply(request.get_json().get('plan_id')))
-
-    @app.get('/star-day')
-    def star_day_page():
-        return render_template('star_day.html')
-
-    @app.errorhandler(StarDayAuthError)
-    @app.errorhandler(StarDayError)
-    def star_day_error(error):
-        return jsonify(error=str(error), code=error.code), error.status
-
-    @app.get('/api/star-day/status')
-    def star_day_status():
-        return jsonify(star_scheduler.status())
-
-    @app.post('/api/star-day/open')
-    def star_day_open():
-        star_scheduler.open_page()
-        return jsonify(message='活动凭据检查已安排')
-
-    @app.post('/api/star-day/login/sms')
-    def star_day_send_sms():
-        return jsonify(star_scheduler.sms.send(star_scheduler.sms_snapshot(request.get_json().get('login_id'))))
-
-    @app.post('/api/star-day/login/submit')
-    def star_day_sms_login():
-        return jsonify(star_scheduler.sms_login(request.get_json()))
-
-    @app.post('/api/star-day/settings')
-    def star_day_settings():
-        return jsonify(message=star_scheduler.settings(request.get_json()))
-
-    @app.post('/api/star-day/calibrate')
-    def star_day_calibrate():
-        return jsonify(star_scheduler.calibrate())
-
-    @app.post('/api/star-day/signin')
-    def star_day_signin():
-        return jsonify(message=star_scheduler.run(request.get_json().get('login_ids')))
-
-    @app.post('/api/star-day/recheck')
-    def star_day_recheck():
-        return jsonify(message=star_scheduler.run(request.get_json().get('login_ids'), inspect=True))
-
-    @app.get('/api/star-day/products')
-    def star_day_products():
-        return jsonify(products=star_scheduler.products(request.args.get('login_id')))
-
-    @app.post('/api/star-day/jobs')
-    def star_day_schedule():
-        return jsonify(star_scheduler.schedule(request.get_json()))
-
-    @app.post('/api/star-day/claim')
-    def star_day_claim():
-        return jsonify(star_scheduler.schedule(request.get_json(), immediate=True))
-
-    @app.get('/api/star-day/gift/options')
-    def star_day_gift_options():
-        return jsonify(star_scheduler.gift_options(request.args.get('login_id')))
-
-    @app.post('/api/star-day/gift')
-    def star_day_gift():
-        payload = request.get_json()
-        if not isinstance(payload.get('recipient'), dict):
-            raise StarDayError('请选择赠送接收人。', 'INVALID_RECIPIENT', 400)
-        mode = payload.get('mode', 'now')
-        if mode not in ('now','daily'):
-            raise StarDayError('请选择立即赠送或每天 10:00 抢购赠送。', 'INVALID_MODE', 400)
-        return jsonify(star_scheduler.schedule(payload, immediate=mode == 'now'))
-
-    @app.post('/api/star-day/jobs/stop')
-    def star_day_stop():
-        star_scheduler.stop(request.get_json().get('id'))
-        return jsonify(message='任务已停止并移除。')
-
-    @app.post('/api/checkin/settings')
-    def save_checkin_settings():
-        return jsonify(checkin_scheduler.update_settings(request.get_json()))
-
-    @app.post('/api/checkin/tasks/save')
-    def save_checkin_tasks():
-        return jsonify(message=checkin_scheduler.save(request.get_json()))
-
-    @app.post('/api/checkin/tasks/stop')
-    def stop_checkin_tasks():
-        checkin_scheduler.stop(request.get_json().get('ids'))
-        return jsonify(message='已停止所选任务，已发出的请求会保留结果')
-
-    @app.post('/api/checkin/run')
-    def run_checkin():
-        data = request.get_json()
-        if data.get('kind') != 'signin':
-            return jsonify(error='此入口仅执行每日签到。'), 400
-        return jsonify(message=checkin_scheduler.run(data.get('login_ids')))
-
-    @app.errorhandler(TaskError)
-    def lingxi_task_error(error):
-        return jsonify(error=str(error)),error.status
-
-    @app.get('/api/lingxi/tasks')
-    def lingxi_tasks():
-        return jsonify(tasks=lingxi_scheduler.snapshots(),warning=lingxi_scheduler.warning,
-                       server_time=lingxi_scheduler.now().isoformat(),settings=lingxi_scheduler.settings())
-
-    @app.get('/api/lingxi/settings')
-    def lingxi_settings():
-        return jsonify(settings=lingxi_scheduler.settings())
-
-    @app.post('/api/lingxi/settings')
-    def save_lingxi_settings():
-        return jsonify(settings=lingxi_scheduler.update_settings(request.get_json()),message='发送设置已保存并立即生效')
-
-    @app.get('/api/lingxi/tasks/<task_id>')
-    def lingxi_task_detail(task_id):
-        tasks=lingxi_scheduler.snapshots(task_id)
-        if not tasks:raise TaskError('任务不存在。',404)
-        return jsonify(task=tasks[0])
-
-    @app.post('/api/lingxi/tasks/save')
-    def save_lingxi_task():
-        ids=lingxi_scheduler.save(request.get_json())
-        return jsonify(ids=ids,message='已保存灵犀定时发送任务')
-
-    @app.post('/api/lingxi/tasks/stop')
-    def stop_lingxi_task():
-        lingxi_scheduler.stop(request.get_json().get('id'))
-        return jsonify(message='已停止后续发送，已发出的请求继续保留回复')
-
-    @app.post('/api/lingxi/tasks/stop-batch')
-    def stop_lingxi_tasks():
-        ids=lingxi_scheduler.stop_batch(request.get_json())
-        return jsonify(ids=ids,message=f'已停止 {len(ids)} 项任务；正在接收的回复会保留，结束后可删除')
-
-    @app.post('/api/lingxi/tasks/adjust')
-    def adjust_lingxi_tasks():
-        ids=lingxi_scheduler.adjust_batch(request.get_json())
-        return jsonify(ids=ids,message=f'已调整 {len(ids)} 项任务')
-
-    @app.post('/api/lingxi/tasks/delete')
-    def delete_lingxi_task():
-        lingxi_scheduler.delete(request.get_json().get('id'))
-        return jsonify(message='任务已删除')
-
-    @app.post('/api/lingxi/tasks/delete-batch')
-    def delete_lingxi_tasks():
-        ids=lingxi_scheduler.delete_batch(request.get_json())
-        return jsonify(ids=ids,message=f'已删除 {len(ids)} 项任务及执行记录')
 
     @app.get("/api/status")
     def status():
@@ -1355,6 +1029,13 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
 
     star_scheduler = StarDayScheduler(star_credentials, unified.public, storage=database)
     app.extensions['star_day_scheduler'] = star_scheduler
+
+    register_monthly_coupon_routes(app, monthly_scheduler)
+    register_star_day_routes(app, star_scheduler)
+    register_lingxi_tasks_routes(app, lingxi_scheduler)
+    register_checkin_routes(app, checkin_scheduler, checkin_beans, checkin_teams, unified)
+    register_coupons_routes(app, unified, coupon_uses, coupon_notices)
+
     def activity_credentials(login_id, *, allow_cached=False):
         with unified.lock:
             saved = unified.get_id(login_id)

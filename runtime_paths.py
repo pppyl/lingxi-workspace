@@ -11,7 +11,7 @@ DATA_DIR=Path(os.environ['LINGXI_DATA_DIR']).resolve() if os.environ.get('LINGXI
 if DATA_DIR.resolve().is_relative_to(ROOT):
     raise ValueError('账号数据目录必须位于项目目录外，请设置外部 LINGXI_DATA_DIR。')
 RECHARGE_DATA_DIR=DATA_DIR/'recharge'
-VERSION='2.2.5'
+VERSION='2.2.6'
 
 
 def prepare_runtime_data():

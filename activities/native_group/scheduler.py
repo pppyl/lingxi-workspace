@@ -10,7 +10,7 @@ from features.checkin.client import CheckinError
 from recharge.cmcc import SHANGHAI
 from workspace.accounts.storage import LoginStorageError
 from .client import ENTRY, award_ready, requires_authorization
-from .phone_call import sync_confirmed_call, sync_existing_authorization, automatic_call_context
+from .phone_call import complete_call_task, sync_confirmed_call, sync_existing_authorization, automatic_call_context
 
 SCOPE = 'native-group'
 
@@ -45,6 +45,7 @@ class GroupScheduler:
             'campaign': {'startTime': '2026-11-24 00:00:00', 'endTime': '2026-12-31 23:59:59'}, 'rules': ''}
         self.data.setdefault('batch', None)
         self.data.setdefault('phone_calls', {})
+        self.data.setdefault('auto_calls', {})
         self.data.setdefault('auto_claims', {})
         self.data.setdefault('auth_sync', {})
 
@@ -68,6 +69,7 @@ class GroupScheduler:
                 'pending': deepcopy(self.data['pending'].get(account['id'])),
                 'running': account['id'] in self.running and account['id'] != completed_login_id,
                 'phone_call': deepcopy(self.data['phone_calls'].get(account['id'])),
+                'auto_call': deepcopy(self.data['auto_calls'].get(account['id'])),
                 'auto_claim': deepcopy(self.data['auto_claims'].get(account['id'])),
                 'auth_sync': deepcopy(self.data['auth_sync'].get(account['id'])),
                 'records': deepcopy(self.data['records'].get(account['id'], []))} for account in self.accounts()],
@@ -75,6 +77,7 @@ class GroupScheduler:
                 'call_authorization_available': bool(self.data.get('call_context')),
                 'call_context_auto_setup': True,
                 'authorization_repair': True,
+                'unattended_calls_enabled': True,
                 'auto_claim_enabled': True, 'warning': self.warning}
 
     def _save_observation(self, login_id, observation):
@@ -102,6 +105,10 @@ class GroupScheduler:
                                if auth_done else '官方已确认队伍领奖条件，授权明细待更新，不再阻塞领奖。'}
             if call_done and login_id in data['phone_calls']:
                 data['phone_calls'][login_id].update(stage='confirmed', checked_at=observation['checked_at'])
+            if call_done:
+                data['auto_calls'][login_id] = {**data['auto_calls'].get(login_id, {}),
+                    'state': 'confirmed', 'checked_at': observation['checked_at'],
+                    'message': '官方已确认通话任务完成。'}
             if str(observation['campaign'].get('groupPrizeBtnStatus')) in {'2', '3', '4'}:
                 data['auto_claims'][login_id] = {**data['auto_claims'].get(login_id, {}),
                     'state': 'confirmed', 'checked_at': observation['checked_at'], 'message': '官方已确认组队奖励领取。'}
@@ -111,7 +118,7 @@ class GroupScheduler:
                 confirmed = (kind in {'create', 'join'} and bool(group)
                     or kind == 'quit' and not group
                     or kind == 'claim' and str(observation['campaign'].get('groupPrizeBtnStatus')) in {'2', '3', '4'}
-                    or kind == 'call_confirm' and call_done
+                    or kind in {'call_confirm', 'auto_call'} and call_done
                     or kind == 'call_authorize' and auth_gate_resolved
                     or kind == 'draw' and (
                         int(observation['campaign'].get('todayAlreadyDrawTimes') or 0) > pending['daily_draws']
@@ -136,7 +143,7 @@ class GroupScheduler:
             generated = not context
             if generated:
                 if existing_role_confirmed is not True:
-                    raise CheckinError('首次使用请确认通话手机已将中国移动设为默认电话，程序将自动配置本机参数。',
+                    raise CheckinError('首次使用需由无人值守流程自动准备活动设备参数。',
                                        'CALL_AUTH_REQUIRED', 409)
                 context = automatic_call_context(snapshot)
             def before_authorization():
@@ -173,6 +180,64 @@ class GroupScheduler:
         authorization = self.data['auth_sync'][login_id]
         self._record(login_id, 'pending' if authorization['state'] == 'details_pending' else 'success', authorization['message'])
         return observation
+
+    def _auto_complete_call(self, login_id, client, session, snapshot, observation, *, force=False):
+        group = observation['campaign'].get('userGroupInfo') or {}
+        member = next((row for row in group.get('groupMembers', [])
+                       if row.get('phone') == observation['identity']['phone']), {})
+        attempt = self.data['auto_calls'].get(login_id, {})
+        if (self.stopped or not member or str(member.get('callTaskStatus')) == '1'
+                or str(observation['campaign'].get('groupPrizeBtnStatus')) in {'2', '3', '4'}):
+            return observation
+        if self.data['pending'].get(login_id):
+            return observation
+        if attempt.get('state') == 'failed' and not force:
+            return observation
+        if requires_authorization(member) and str(member.get('authTaskStatus')) != '1':
+            if self.data['auth_sync'].get(login_id, {}).get('state') == 'failed' and not force:
+                return observation
+            try:
+                observation = self._sync_authorization(login_id, client, session, snapshot,
+                    existing_role_confirmed=not bool(self.data.get('call_context')))
+            except CheckinError:
+                return self.data['observations'].get(login_id, observation)
+            group = observation['campaign'].get('userGroupInfo') or {}
+            member = next((row for row in group.get('groupMembers', [])
+                           if row.get('phone') == observation['identity']['phone']), {})
+            if str(member.get('authTaskStatus')) != '1':
+                return observation
+        def before_submit():
+            client._current(snapshot)
+            if self.stopped or login_id in self.forgotten:
+                raise CheckinError('活动或账号已停止。', 'STOPPED', 409)
+            def save(data):
+                at = self.now().isoformat()
+                data['pending'][login_id] = {'kind': 'auto_call', 'at': at, 'automatic': not force}
+                data['auto_calls'][login_id] = {'state': 'submitted', 'at': at,
+                    'message': '已提交通话任务，正在核对官方结果。'}
+            self._change(save)
+        try:
+            complete_call_task(snapshot, before_submit=before_submit)
+            observation = client.inspect(session)
+            self._save_observation(login_id, observation)
+            if self.data['pending'].get(login_id):
+                raise CheckinError('通话任务已提交，官方状态尚待确认，不会重复提交。',
+                                   'RESULT_UNCERTAIN', 409, uncertain=True)
+            self._record(login_id, 'success', '通话任务已无人值守完成并获官方确认。')
+        except CheckinError as error:
+            def save(data):
+                if getattr(error, 'definitive_rejection', False):
+                    data['pending'].pop(login_id, None)
+                pending = data['pending'].get(login_id, {}).get('kind') == 'auto_call'
+                data['auto_calls'][login_id] = {**data['auto_calls'].get(login_id, {}),
+                    'state': 'pending' if pending else 'failed', 'code': error.code,
+                    'upstream_status': getattr(error, 'upstream_status', None),
+                    'message': '通话任务结果待核实，后续只查询官方进度。' if pending else clean(error)}
+            self._change(save)
+            self._record(login_id, 'pending' if self.data['pending'].get(login_id) else 'error',
+                         self.data['auto_calls'][login_id]['message'], code=error.code,
+                         upstream_status=getattr(error, 'upstream_status', None))
+        return self.data['observations'].get(login_id, observation)
 
     def _repair_completed_authorization(self, login_id, client, session, snapshot, observation):
         group = observation['campaign'].get('userGroupInfo') or {}
@@ -253,6 +318,28 @@ class GroupScheduler:
                             rules = client.rules()
                             self._change(lambda data: data.update(rules=rules))
                         observation = self._repair_completed_authorization(login_id, client, session, snapshot, observation)
+                        if automatic:
+                            observation = self._auto_complete_call(login_id, client, session, snapshot, observation)
+                        self._auto_claim(login_id, client, session, snapshot, observation)
+                        return self.status(completed_login_id=login_id)
+                    if kind == 'call_execute':
+                        group = observation['campaign'].get('userGroupInfo') or {}
+                        member = next((row for row in group.get('groupMembers', [])
+                                       if row.get('phone') == observation['identity']['phone']), {})
+                        if not member:
+                            raise CheckinError('请先加入队伍，后台才能执行本账号的通话任务。',
+                                               'CALL_TEAM_REQUIRED', 409)
+                        observation = self._auto_complete_call(login_id, client, session, snapshot, observation, force=True)
+                        pending = self.data['pending'].get(login_id)
+                        if pending:
+                            raise CheckinError('本次任务结果待官方确认，后续只回查进度，不会重复提交。',
+                                               'RESULT_UNCERTAIN', 409, uncertain=True)
+                        authorization = self.data['auth_sync'].get(login_id, {})
+                        if authorization.get('state') == 'failed':
+                            raise CheckinError(authorization['message'], authorization.get('code') or 'CALL_AUTH_REJECTED', 409)
+                        attempt = self.data['auto_calls'].get(login_id, {})
+                        if attempt.get('state') in {'failed', 'waiting_authorization'}:
+                            raise CheckinError(attempt['message'], attempt.get('code') or 'CALL_AUTH_REQUIRED', 409)
                         self._auto_claim(login_id, client, session, snapshot, observation)
                         return self.status(completed_login_id=login_id)
                     if kind in {'call_prepare', 'call_confirm', 'call_authorize'}:
@@ -462,7 +549,7 @@ class GroupScheduler:
     def forget(self, login_id):
         self.forgotten.add(login_id)
         def remove(data):
-            for key in ('observations', 'pending', 'records', 'phone_calls', 'auto_claims', 'auth_sync'):
+            for key in ('observations', 'pending', 'records', 'phone_calls', 'auto_calls', 'auto_claims', 'auth_sync'):
                 data[key].pop(login_id, None)
         self._change(remove)
         self.next_checks.pop(login_id, None)
@@ -480,14 +567,19 @@ class GroupScheduler:
                 member = next((row for row in group.get('groupMembers', [])
                                if row.get('phone') == (observation.get('identity') or {}).get('phone')), {})
                 attempt = self.data['auto_claims'].get(login_id, {})
+                call_attempt = self.data['auto_calls'].get(login_id, {})
                 pending_claim = self.data['pending'].get(login_id, {}).get('kind') == 'claim'
+                eligibility_paused = (attempt.get('state') == 'paused'
+                    and attempt.get('date') == now.date().isoformat())
+                call_needed = (bool(member) and str(member.get('callTaskStatus')) != '1'
+                    and call_attempt.get('state') not in {'failed', 'confirmed'} and not eligibility_paused)
+                claim_needed = (bool(group)
+                    and (campaign.get('showGroup') or member and not requires_authorization(member))
+                    and str(campaign.get('groupPrizeBtnStatus')) not in {'2', '3', '4'}
+                    and (str(campaign.get('groupPrizeBtnStatus')) != '0' or pending_claim)
+                    and attempt.get('state') not in {'failed', 'confirmed'} and not eligibility_paused)
                 if (account['status'] != 'active' or login_id in self.running or login_id in self.forgotten
-                        or not group
-                        or not campaign.get('showGroup') and (not member or requires_authorization(member))
-                        or str(campaign.get('groupPrizeBtnStatus')) in {'2', '3', '4'}
-                        or str(campaign.get('groupPrizeBtnStatus')) == '0' and not pending_claim
-                        or attempt.get('state') in {'failed', 'confirmed'}
-                        or attempt.get('state') == 'paused' and attempt.get('date') == now.date().isoformat()
+                        or not (call_needed or claim_needed)
                         or self.next_checks.get(login_id, now) > now):
                     continue
                 self.next_checks[login_id] = now + timedelta(minutes=1)

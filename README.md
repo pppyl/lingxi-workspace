@@ -148,9 +148,9 @@ Android 独立版的本地服务仅供手机应用使用。Windows 和 Android �
 
 测试目录仅在本地维护，发布前照常进行本地回归；GitHub 当前源码与客户端安装包不包含测试目录。
 
-内置业务的 Python 实现在 `features/` 下按工作台菜单分目录。周三充值日使用独立应用目录 `recharge/`，可安装的活动包位于 `activities/`。业务协议说明见 `docs/protocols/`。
+内置业务的 Python 实现在 `features/` 下按工作台菜单分目录。签到、卡券、每月话费券、星动日和灵犀定时任务的页面/API 路由位于各功能的 `routes.py`。`app.py` 负责组装服务、共享账号和调度器。周三充值日使用独立应用目录 `recharge/`，可安装的活动包位于 `activities/`。业务协议说明见 `docs/protocols/`。
 
-- Windows x64 使用 Python 3.12。安装 `requirements-desktop.txt` 后运行 `python build_tools/build_windows.py`，产物位于 `release/`。
+- Windows x64 使用 Python 3.12。安装 `build_tools/requirements-desktop.txt` 后运行 `python build_tools/build_windows.py`，产物位于 `release/`。
 - Android 构建需要配置 JDK、Android SDK 和 Gradle，具体步骤见 [ANDROID.md](docs/ANDROID.md)。
 
 | 主题 | 文档 |
@@ -158,7 +158,7 @@ Android 独立版的本地服务仅供手机应用使用。Windows 和 Android �
 | Windows 客户端与使用 | [DESKTOP.md](docs/DESKTOP.md) |
 | 账单、余量与已订业务 | [账单](docs/protocols/BILL_PROTOCOL.md) · [余量](docs/protocols/USAGE_PROTOCOL.md) · [已订业务](docs/protocols/SERVICES_PROTOCOL.md) |
 | 卡券与签到 | [卡券](docs/protocols/COUPON_PROTOCOLS.md) · [周三连续打卡](docs/protocols/WEDNESDAY_CHECKIN_PROTOCOL.md) · [微信渠道签到](docs/protocols/WEB_CHECKIN_PROTOCOL.md) |
-| 发布与依赖说明 | [发行说明](RELEASE_NOTES.md) · [第三方组件](THIRD_PARTY_NOTICES.md) |
+| 发布与依赖说明 | [发行说明](docs/RELEASE_NOTES.md) · [第三方组件](docs/THIRD_PARTY_NOTICES.md) |
 
 <details>
 <summary>源码位置和常用本地接口</summary>
@@ -168,12 +168,17 @@ Android 独立版的本地服务仅供手机应用使用。Windows 和 Android �
 | `app.py`、`desktop.py` | 源码服务、Windows 客户端启动入口 |
 | `workspace/accounts/` | 共享账号、登录、凭据复用与本地存储 |
 | `workspace/`、`workspace/clients/` | 平台管理、网络监听、更新检查和客户端适配 |
+| `workspace/activity_packages.py`、`workspace/clients/windows_runtime.py` | 活动包管理和 Windows 托盘客户端实现 |
 | `features/information/`、`features/lingxi/` | 信息查询、灵犀对话与定时发送 |
 | `features/star_day/`、`features/checkin/`、`features/net_age/` | 星动日、签到有礼、网龄 |
 | `features/monthly_coupon/`、`features/coupons/` | 每月话费券、我的卡券 |
 | `features/mobile_rights/`、`features/member_benefits/` | YD权益、会员权益 |
 | `recharge/`、`activities/` | 周三充值日和可独立启停的活动模块 |
-| `templates/`、`static/` | 页面、交互和样式 |
+| `templates/`、`static/` | 主站页面、交互、样式和图标。活动包和充值子应用各自携带前端资源。 |
+| `build_tools/`、`android/` | 桌面和 Android 构建脚本、构建资源与 Android 工程 |
+| `build_tools/analysis/`、`docs/protocols/` | 开发分析脚本、协议说明 |
+| `.build/`、`release/` | 本机的构建缓存、工作树及已生成的客户端 |
+| `tests/`、各模块的 `tests/` | 本地回归测试 |
 
 | 本地接口 | 用途 |
 | --- | --- |

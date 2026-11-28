@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  const el=id=>document.getElementById(id), root='/api/native-group', autoClaimNote=el('ng-auto-claim'), roleConfirmation=el('ng-call-role-confirmed');
-  let model=null, selected=null, size=10, busy=false, again=false, accountsChanged=false, operation=null, plan=null, phoneAccountId=null;
+  const el=id=>document.getElementById(id), root='/api/native-group', autoClaimNote=el('ng-auto-claim');
+  let model=null, selected=null, size=10, busy=false, again=false, accountsChanged=false, operation=null, plan=null;
   const text=(id,value)=>{el(id).textContent=value;};
   const node=(tag,value)=>{const n=document.createElement(tag);n.textContent=value;return n;};
   function feedback(message,error=false){text('ng-feedback',message);el('ng-feedback').hidden=!message;el('ng-feedback').classList.toggle('error',error);}
@@ -23,7 +23,6 @@
   function render(){
     if(!model)return;
     if(!model.accounts.some(a=>a.id===selected))selected=model.accounts.find(a=>a.status==='active')?.id||null;
-    if(phoneAccountId&&!model.accounts.some(a=>a.id===phoneAccountId))el('ng-call-dialog').close();
     text('ng-count',model.accounts.length);text('ng-period',`${model.campaign.start_at} 至 ${model.campaign.end_at}`);
     el('ng-accounts').replaceChildren(...model.accounts.map(account=>{
       const b=node('button','');b.type='button';b.className='ng-account';b.setAttribute('aria-pressed',String(account.id===selected));
@@ -52,11 +51,11 @@
     text('ng-done-count',members.filter(memberTasksDone).length);
     el('ng-members').replaceChildren(...members.map(member=>{const row=document.createElement('tr');row.append(node('td',member.phone),node('td',!requiresAuthorization(member)?'无需此项（iOS）':String(member.authTaskStatus)==='1'?'已完成':'待官方确认'),node('td',String(member.callTaskStatus)==='1'?'已完成':'尚未完成'));return row;}));
     const own=members.find(member=>member.phone===state?.identity.phone), callDone=String(own?.callTaskStatus)==='1';
-    const settled=callDone||allDone||rewardClaimed(state), needsAuth=requiresAuthorization(own)&&String(own?.authTaskStatus)!=='1'&&!rewardClaimed(state);
+    const settled=callDone||allDone||rewardClaimed(state), needsAuth=requiresAuthorization(own)&&String(own?.authTaskStatus)!=='1'&&!rewardClaimed(state), callTask=account?.auto_call;
     el('ng-call-panel').hidden=!group;
-    text('ng-call-summary',settled&&needsAuth?(allDone?'官方已开放领奖；授权明细尚未确认，可单独核对或补齐，无需重拨。':account?.auth_sync?.state==='failed'?`有效通话已完成，授权同步未完成：${account.auth_sync.message} 请补齐授权，无需重拨。`:'有效通话已完成，默认电话授权尚待确认，请补齐已有授权，无需再次拨号。'):settled?'官方已确认当前账号的通话任务，无需重复拨打。':account?.pending?'上次提交等待官方确认，请刷新核对。':account?.app_login_required?'请先在账号管理恢复 APP 登录，再准备拨号。':!needsAuth?'在手机浏览器中拨打电话，完成真实通话后同步并核对。':model.call_authorization_available?'准备拨号时将自动同步本账号的既有通话授权。':model.call_context_auto_setup?'首次使用确认手机已有真实默认电话授权后，本机会自动准备参数，无需导入配置。':'此版本缺少自动配置入口，请更新通话组队模块。');
-    text('ng-call-open',settled&&needsAuth?'补齐通话授权':settled?'通话已完成':account?.phone_call?'继续通话任务':'去拨打电话');
-    el('ng-call-open').disabled=busy||account?.status!=='active'||!group||settled&&!needsAuth||model.campaign.ended;
+    text('ng-call-summary',settled&&needsAuth?'官方已确认通话任务，授权明细尚待同步，后台会继续核对。':settled?'官方已确认当前账号的通话任务。':account?.pending?'上次授权或通话任务已提交，后续只回查官方进度，不会重复提交。':account?.app_login_required?'请先在账号管理恢复 APP 登录。':callTask?.state==='failed'?`自动完成未成功：${callTask.message}`:callTask?.state==='waiting_authorization'?'等待首次通话授权配置；配置后后台自动接续。':'已开启无人值守：后台按账号提交官方通话任务并回查，不发起实际电话。');
+    text('ng-call-run',settled?'通话任务已完成':callTask?.state==='failed'?'重试自动完成':account?.pending?.kind==='auto_call'?'结果待核实':'立即执行');
+    el('ng-call-run').disabled=busy||account?.status!=='active'||!group||settled||!!account?.pending||model.campaign.ended;
     text('ng-draw-count',`${campaign?.drawTimes??'—'} 次机会 · 今日已抽 ${campaign?.todayAlreadyDrawTimes??0} / 2`);
     text('ng-prepare',account?.risk_ready?'抽奖认证已准备':'准备抽奖认证');
     el('ng-prepare').disabled=busy||account?.status!=='active'||!!account?.pending||!!account?.risk_ready;
@@ -66,86 +65,14 @@
     text('ng-rules',model.rules||'查询后读取官方规则。');text('ng-checked',state?`最近核对 ${state.checked_at.replace('T',' ').slice(0,19)}`:'');
     el('ng-records').replaceChildren(...(account?.records||[]).map(record=>node('li',`${record.at.replace('T',' ').slice(0,19)} · ${record.message}${record.code?`（返回码 ${record.code}${record.upstream_status?`，HTTP ${record.upstream_status}`:''}）`:''}`)));
     el('ng-refresh').disabled=!selected;el('ng-plan').disabled=busy;
-    renderPhoneCall();
   }
-  function renderPhoneCall(){
-    if(!phoneAccountId)return;
-    const account=model.accounts.find(a=>a.id===phoneAccountId), state=account?.observation;
-    const own=state?.campaign.userGroupInfo?.groupMembers?.find(m=>m.phone===state.identity.phone);
-    const done=String(own?.callTaskStatus)==='1'||awardReady(state)||rewardClaimed(state);
-    const authorized=!requiresAuthorization(own)||String(own?.authTaskStatus)==='1'||rewardClaimed(state);
-    const draft=account?.phone_call, matching=draft?.destination===el('ng-call-number').value;
-    const ready=matching&&draft?.stage==='prepared'&&!account?.pending&&!done;
-    const available=account?.status==='active'&&!model.campaign.ended;
-    const appReady=available&&!account?.app_login_required, canAuthorize=!!model.call_authorization_available;
-    const canSetup=!!model.call_context_auto_setup&&!!roleConfirmation, needsSetup=!authorized&&!canAuthorize;
-    const roleReady=!needsSetup||canSetup&&roleConfirmation.checked;
-    text('ng-call-account',`任务账号 ${account?.name||''} · ${account?.phone_masked||''}`);
-    text('ng-call-title',done&&!authorized?'补齐通话授权':'完成通话任务');
-    el('ng-call-dial-form').hidden=done;
-    el('ng-call-return').hidden=!ready;
-    if(ready)el('ng-call-again').href='tel:'+draft.destination;else el('ng-call-again').removeAttribute('href');
-    el('ng-call-authorization').hidden=authorized||(!canAuthorize&&!canSetup);
-    if(roleConfirmation){el('ng-call-role-confirmation').hidden=!needsSetup||!canSetup;roleConfirmation.disabled=busy||!appReady||!!account?.pending;text('ng-call-authorization-info',needsSetup?'本机会自动复用当前账号的有效设备参数，缺少时向官方初始化，核验后加密保存；以后换号和重启直接复用。真实默认电话授权需已经存在。':'准备拨号时自动同步本账号已有的通话授权，并核对官方结果。');}
-    text('ng-call-authorize',needsSetup&&canSetup?'自动配置并同步授权':'同步通话授权');
-    el('ng-call-authorize').disabled=busy||!appReady||!!account?.pending||!roleReady;
-    el('ng-call-number').disabled=busy||!appReady||done||!!account?.pending||(needsSetup&&!canSetup);
-    el('ng-call-dial').disabled=busy||!appReady||done||!!account?.pending||!roleReady||!/^1[3-9][0-9]{9}$/.test(el('ng-call-number').value);
-    el('ng-call-connected').disabled=busy||!ready;
-    el('ng-call-sync').disabled=busy||!appReady||!authorized||!ready||!el('ng-call-connected').checked;
-    el('ng-call-refresh').disabled=busy||!available;
-    text('ng-call-message',done&&authorized?'官方已确认通话任务完成。':account?.pending?'上次提交结果待官方确认，仅核对进度，不会重复同步。':!appReady?'请先在账号管理恢复 APP 登录，再同步授权。':!authorized?(done?'有效通话已完成，仅需同步缺失的授权，无需再次拨打电话。':canAuthorize?'点击拨号后自动同步本账号的既有授权，官方确认后再打开拨号。':canSetup?'首次使用请勾选已有真实默认电话授权，点击拨号即可自动配置，无需导入文件。':'本账号默认通话授权尚未接通，请更新通话组队模块以使用自动配置。'):ready?'结束通话后再确认同步。仅打开拨号页或返回浏览器不代表通话完成。':'拨打熟悉且同意接听的号码，通话结束后回到此处。');
-    el('ng-call-message').classList.remove('error');
-  }
-  el('ng-call-open').addEventListener('click',()=>{
-    phoneAccountId=selected;
-    el('ng-call-number').value=current()?.phone_call?.destination||'';
-    el('ng-call-connected').checked=false;
-    if(roleConfirmation)roleConfirmation.checked=false;
-    renderPhoneCall();el('ng-call-dialog').showModal();
+  el('ng-call-run').addEventListener('click',async()=>{
+    if(busy||!selected||el('ng-call-run').disabled)return;
+    busy=true;render();
+    try{model=await call('/run',{login_id:selected,kind:'call_execute',confirmed:true});feedback('通话任务已执行并核对官方进度。');}
+    catch(error){feedback(error.message,true);model=await call('/status');}
+    finally{busy=false;render();if(again){again=false;refresh();}}
   });
-  el('ng-call-number').addEventListener('input',()=>{
-    el('ng-call-number').value=el('ng-call-number').value.replace(/[^0-9]/g,'').slice(0,11);
-    el('ng-call-connected').checked=false;renderPhoneCall();
-  });
-  el('ng-call-connected').addEventListener('change',renderPhoneCall);
-  if(roleConfirmation)roleConfirmation.addEventListener('change',renderPhoneCall);
-  el('ng-call-dialog').addEventListener('close',()=>{phoneAccountId=null;el('ng-call-connected').checked=false;if(roleConfirmation)roleConfirmation.checked=false;});
-  el('ng-call-authorize').addEventListener('click',async()=>{
-    if(busy||el('ng-call-authorize').disabled||!phoneAccountId)return;
-    const id=phoneAccountId;busy=true;render();let failure='';
-    try{const payload={login_id:id,kind:'call_authorize',confirmed:true};if(!model.call_authorization_available&&model.call_context_auto_setup)payload.existing_role_confirmed=roleConfirmation.checked;model=await call('/run',payload);feedback('任务状态已核对，并已接续检查组队奖励。');}
-    catch(error){failure=error.message;feedback(failure,true);model=await call('/status');}
-    finally{busy=false;render();if(failure){text('ng-call-message',failure);el('ng-call-message').classList.add('error');}if(again){again=false;refresh();}}
-  });
-  el('ng-call-dial-form').addEventListener('submit',async event=>{
-    event.preventDefault();if(busy||!phoneAccountId||!el('ng-call-dial-form').reportValidity())return;
-    const id=phoneAccountId;busy=true;render();let failure='';
-    try{
-      const payload={login_id:id,kind:'call_prepare',destination:el('ng-call-number').value,confirmed:true};
-      if(!model.call_authorization_available&&model.call_context_auto_setup)payload.existing_role_confirmed=!!roleConfirmation?.checked;
-      model=await call('/run',payload);
-      const account=model.accounts.find(a=>a.id===id), draft=account?.phone_call;
-      const done=awardReady(account?.observation)||rewardClaimed(account?.observation)||account?.observation?.campaign.userGroupInfo?.groupMembers?.some(m=>m.phone===account.observation.identity.phone&&String(m.callTaskStatus)==='1');
-      if(!done&&draft?.stage==='prepared')window.location.href='tel:'+draft.destination;
-    }catch(error){failure=error.message;feedback(failure,true);model=await call('/status');}
-    finally{busy=false;render();if(failure){text('ng-call-message',failure);el('ng-call-message').classList.add('error');}if(again){again=false;refresh();}}
-  });
-  el('ng-call-sync').addEventListener('click',async()=>{
-    if(busy||!phoneAccountId||!el('ng-call-connected').checked)return;
-    const id=phoneAccountId, draft=model.accounts.find(a=>a.id===id)?.phone_call;
-    busy=true;render();let failure='';
-    try{
-      model=await call('/run',{login_id:id,kind:'call_confirm',call_id:draft.id,connected:true,confirmed:true});
-      el('ng-call-connected').checked=false;feedback('通话任务已获官方确认。');
-    }catch(error){failure=error.message;feedback(failure,true);model=await call('/status');}
-    finally{
-      busy=false;render();
-      if(failure){text('ng-call-message',failure);el('ng-call-message').classList.add('error');}
-      if(again){again=false;refresh();}
-    }
-  });
-  el('ng-call-refresh').addEventListener('click',()=>refresh(phoneAccountId));
   async function refresh(target=selected){
     if(busy){again=true;return;}
     let id=target,failure='';busy=true;render();
@@ -159,7 +86,7 @@
       }
       if(id){model=await call('/status?login_id='+encodeURIComponent(id));if(selected===id)feedback(current()?.pending?'上次提交待官方确认，已暂停重复提交。':'');}
     }catch(error){failure=error.message;feedback(failure,true);}
-    finally{busy=false;render();if(failure&&phoneAccountId){text('ng-call-message',failure);el('ng-call-message').classList.add('error');}if(again||accountsChanged||selected!==id){again=false;refresh();}}
+    finally{busy=false;render();if(again||accountsChanged||selected!==id){again=false;refresh();}}
   }
   function confirm(kind){
     operation={kind,loginId:selected,size};plan=null;

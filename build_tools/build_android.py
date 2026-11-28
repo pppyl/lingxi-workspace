@@ -28,7 +28,7 @@ def main():
     for package in packages:
         (staging/package).mkdir(parents=True, exist_ok=True)
         for source in (ROOT/package).glob('*.py'):
-            if source.name not in ('campus_status.py', 'desktop_browser.py'):
+            if source.name not in ('campus_status.py', 'desktop_browser.py', 'windows_runtime.py'):
                 shutil.copy2(source, staging/package/source.name)
     for asset in ('workspace/accounts/app_login_public_key.json', 'features/mobile_rights/gateway.json'):
         shutil.copy2(ROOT/asset, staging/asset)
@@ -51,7 +51,7 @@ def main():
     icon = ROOT / 'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png'
     icon.parent.mkdir(parents=True, exist_ok=True)
     from PIL import Image
-    Image.open(ROOT / 'desktop_assets/app.png').resize((192, 192)).save(icon)
+    Image.open(ROOT / 'build_tools/assets/app.png').resize((192, 192)).save(icon)
     sdk = Path(os.environ.get('ANDROID_HOME', str(ROOT / '.build/android-sdk')))
     java = Path(os.environ.get('JAVA_HOME', str(ROOT / 'tools/android-static/jdk-21.0.13.0.2+1')))
     gradle = Path(os.environ.get('LINGXI_GRADLE', str(ROOT / '.build/android-tools/gradle/gradle-8.10.2/bin/gradle.bat')))

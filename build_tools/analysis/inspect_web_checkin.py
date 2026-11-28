@@ -1,6 +1,6 @@
 """Recover public check-in assets with Scrapling, without executing a browser.
 
-Install build_tools/requirements-analysis.txt before using this development tool.
+Install build_tools/analysis/requirements.txt before using this development tool.
 No account cookies, SMS requests or check-in submissions are made here.
 """
 import argparse
@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlsplit
 from curl_cffi import requests
 from scrapling import Selector
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from activities.checkin_common.client import ENTRY, ORIGIN, WEB_UA
 

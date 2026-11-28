@@ -152,8 +152,8 @@ class Phone:
     def prepare(self):
         original = self.call("exec-out", "cat", "/system/framework/uiautomator.jar")
         digest = hashlib.sha256(original).hexdigest()[:20]
-        cache = ROOT / "data" / ("ui-reader-" + digest + ".jar")
-        cache.parent.mkdir(exist_ok=True)
+        cache = ROOT / ".build" / "ui-reader" / ("ui-reader-" + digest + ".jar")
+        cache.parent.mkdir(parents=True, exist_ok=True)
         if not cache.exists():
             try:
                 cache.write_bytes(make_ui_reader(original))

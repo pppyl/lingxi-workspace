@@ -25,7 +25,7 @@
 
 ## 分析来源和验证边界
 
-2026-11-01 使用 Scrapling 0.5 的 Selector 提取当前公开页面资源。`build_tools/inspect_web_checkin.py` 可重现公共资源获取，不带用户凭据，也不发送验证码或签到。
+2026-11-01 使用 Scrapling 0.5 的 Selector 提取当前公开页面资源。`build_tools/analysis/inspect_web_checkin.py` 可重现公共资源获取，不带用户凭据，也不发送验证码或签到。
 
 - 当前官方 `index.f6a4f350.js`：SHA-256 `e30e13c54f7b9f4c433f6764f04692886ac0e1ef805f6223499eabf93dffee0d`。
 - 官方 `signInMin1010092026.js`：SHA-256 `0498a5a4d1396dec1ac11f09168420467b69debdc3809568d38c8ef584391057`。

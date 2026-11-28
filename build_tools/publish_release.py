@@ -49,7 +49,7 @@ def main():
     git_env={**os.environ,**({'https_proxy':proxy,'http_proxy':proxy} if proxy else {})}
     subprocess.run(['git','push','origin','HEAD:main'],cwd=ROOT,env=git_env,check=True)
     subprocess.run(['git','push','origin','v'+VERSION],cwd=ROOT,env=git_env,check=True)
-    notes=(ROOT/'RELEASE_NOTES.md').read_text('utf-8')
+    notes=(ROOT/'docs/RELEASE_NOTES.md').read_text('utf-8')
     try:release=api(f'/repos/{OWNER}/{NAME}/releases/tags/v{VERSION}')
     except HTTPError as error:
         if error.code!=404:raise

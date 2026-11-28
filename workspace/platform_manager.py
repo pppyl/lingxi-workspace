@@ -14,7 +14,7 @@ from threading import Event, RLock, Thread
 from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from activity_packages import (ActivityPackages, ActivityPackageStorage, BUNDLED_ACTIVITY_IDS, MAX_ARCHIVE,
+from .activity_packages import (ActivityPackages, ActivityPackageStorage, BUNDLED_ACTIVITY_IDS, MAX_ARCHIVE,
                                PlatformError, export_package, read_manifest)
 from workspace.accounts.credentials import CredentialCache
 from workspace.accounts.storage import LoginStorageError

@@ -1,4 +1,4 @@
--r requirements.txt
+-r ../requirements.txt
 pystray==0.19.5
 Pillow==12.0.0
 pyinstaller==6.22.3

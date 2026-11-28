@@ -1,4 +1,5 @@
 analysis/
+!build_tools/analysis/
 data/
 .venv/
 __pycache__/

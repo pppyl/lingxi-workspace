@@ -22,7 +22,7 @@ def sha256(path):
 def main():
     from PIL import Image
     icon_path = ROOT/'static/app.ico'
-    with Image.open(ROOT/'desktop_assets/app.png') as image:
+    with Image.open(ROOT/'build_tools/assets/app.png') as image:
         image.convert('RGBA').save(icon_path, sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
     notice_dir=ROOT/'.build/notices'
     if notice_dir.exists():
@@ -66,7 +66,7 @@ def main():
     if '--single-file-only' not in sys.argv:subprocess.run(command,cwd=ROOT,check=True)
     package=ROOT/'.build/dist/LingxiWorkspace'
     shutil.copy2(ROOT/'docs/DESKTOP.md',package/'使用说明.txt')
-    shutil.copy2(ROOT/'THIRD_PARTY_NOTICES.md',package/'THIRD_PARTY_NOTICES.md')
+    shutil.copy2(ROOT/'docs/THIRD_PARTY_NOTICES.md',package/'THIRD_PARTY_NOTICES.md')
     shutil.copy2(ROOT/'build_tools/allow-lan.ps1',package/'allow-lan.ps1')
     shutil.copy2(ROOT/'build_tools/diagnose_windows_startup.ps1',package/'diagnose_windows_startup.ps1')
     release=ROOT/'release';release.mkdir(exist_ok=True)
@@ -90,7 +90,7 @@ def main():
     android=release/f'LingxiWorkspace-{VERSION}-Android-arm64.apk'
     if android.exists():artifacts.append(android)
     (release/'SHA256SUMS.txt').write_text(''.join(sha256(path)+'  '+path.name+'\n' for path in artifacts),'utf-8')
-    shutil.copy2(ROOT/'RELEASE_NOTES.md',release/f'RELEASE_NOTES-{VERSION}.md')
+    shutil.copy2(ROOT/'docs/RELEASE_NOTES.md',release/f'RELEASE_NOTES-{VERSION}.md')
     print(json.dumps({'archive':str(archive),'bytes':archive.stat().st_size,'files':len(files),
                       'member_benefits_runtime':'python-embedded-v8'},ensure_ascii=False),flush=True)
 

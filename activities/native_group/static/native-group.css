@@ -34,10 +34,10 @@
 .ng-details summary{cursor:pointer;font-weight:600}
 .ng-actions{justify-content:flex-start;flex-wrap:wrap}
 #ng-feedback{padding:12px 16px;border:1px solid var(--border,#dce5f1);border-radius:8px;background:var(--card,#fff)}
-#ng-feedback.error,#ng-confirm-error,#ng-call-message.error{color:#cc4545}
+#ng-feedback.error,#ng-confirm-error{color:#cc4545}
 #ng-content[aria-busy=true]{opacity:.7}
-#ng-confirm,#ng-share,#ng-call-dialog{width:min(640px,calc(100vw - 32px));box-sizing:border-box;max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--border,#dce5f1);border-radius:14px;padding:24px;background:var(--card,#fff);color:inherit}
-#ng-confirm::backdrop,#ng-share::backdrop,#ng-call-dialog::backdrop{background:#14254066}
+#ng-confirm,#ng-share{width:min(640px,calc(100vw - 32px));box-sizing:border-box;max-height:calc(100dvh - 32px);overflow:auto;border:1px solid var(--border,#dce5f1);border-radius:14px;padding:24px;background:var(--card,#fff);color:inherit}
+#ng-confirm::backdrop,#ng-share::backdrop{background:#14254066}
 #ng-confirm label,#ng-share label{display:grid;gap:10px;margin:16px 0}
 #ng-confirm input,#ng-share input{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--border,#dce5f1);border-radius:8px;background:transparent;color:inherit}
 #ng-confirm footer{justify-content:flex-end;margin-top:22px}
@@ -59,16 +59,4 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .ng-call-panel h3{font-size:16px;margin:0 0 6px}
 .ng-call-panel p{margin:0;line-height:1.6}
 .ng-call-panel button{flex-shrink:0}
-.ng-call-account{font-weight:600;margin:0}
-#ng-call-dial-form{margin-top:20px}
-#ng-call-dial-form>label{display:block;margin-bottom:10px}
-.ng-call-dial-row{display:flex;align-items:stretch;gap:10px}
-#ng-call-number{width:100%;min-width:0;box-sizing:border-box;padding:12px;border:1px solid var(--border,#dce5f1);border-radius:8px;background:transparent;color:inherit;font-size:18px}
-.ng-call-dial-row button{flex-shrink:0}
-#ng-call-return{margin-top:16px}
-#ng-call-again{display:inline-block;margin-bottom:16px}
-.ng-call-confirmation{display:flex;align-items:flex-start;gap:10px;line-height:1.7;cursor:pointer}
-#ng-call-connected{width:18px;height:18px;flex-shrink:0;margin:4px 0 0}
-#ng-call-message{font-size:14px;line-height:1.7;color:var(--muted,#8094ae)}
-#ng-call-dialog footer{justify-content:flex-end;margin-top:20px}
-@media(max-width:480px){.ng-call-panel{align-items:flex-start;flex-direction:column}#ng-call-dialog{padding:20px}.ng-call-dial-row{flex-wrap:wrap}.ng-call-dial-row button{width:100%}}
+@media(max-width:480px){.ng-call-panel{align-items:flex-start;flex-direction:column}}
