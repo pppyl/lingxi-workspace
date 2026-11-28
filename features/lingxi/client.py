@@ -1,10 +1,11 @@
 """Lingxi text protocol from the APP's main H5, verified on a real session.
 
-Source: analysis/native-h5/index.Dawt31QT.js, Xs (payload), Vt (auth check).
+Source: analysis/native-h5/index.Dawt31QT.js, Xs (payload), Vt (service agreement readiness).
 """
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -20,12 +21,14 @@ MAX_EVENT_BYTES = 2_000_000
 
 
 class LingxiError(Exception):
-    def __init__(self, message: str, *, authentication: bool = False):
+    def __init__(self, message: str, *, authentication: bool = False, code: str = ''):
         super().__init__(message)
         self.authentication = authentication
+        self.code = code
 
 
 def verify_token(token: str) -> None:
+    """Check Lingxi readiness; its agreement-service errors do not invalidate APP login."""
     with requests.Session(impersonate="chrome") as client:
         response = client.post(
             VERIFY_URL, json={"authCode": token, "sdkAppKey": "zgydAppSDK"},
@@ -33,13 +36,19 @@ def verify_token(token: str) -> None:
             timeout=(10, 20), allow_redirects=False,
         )
         if response.status_code != 200:
-            raise LingxiError(f"登录验证服务返回 HTTP {response.status_code}。")
+            raise LingxiError(f"灵犀服务核验返回 HTTP {response.status_code}，请稍后在灵犀中重试。",
+                              authentication=response.status_code in {401, 403}, code=str(response.status_code))
         try:
             value = response.json()
         except ValueError as exc:
             raise LingxiError("登录验证服务返回格式不正确。") from exc
-        if not isinstance(value, dict) or str(value.get("rtnCode")) != "0":
-            raise LingxiError("灵犀登录态未通过验证，请重新使用手机号和验证码登录。", authentication=True)
+        if not isinstance(value, dict) or 'rtnCode' not in value:
+            raise LingxiError('灵犀服务核验响应不完整，请稍后重试。', code='UPSTREAM_FORMAT')
+        code = str(value['rtnCode'])
+        if code != '0':
+            safe_code = code if re.fullmatch(r'[A-Za-z0-9_-]{1,32}', code) else 'unknown'
+            raise LingxiError(f'灵犀服务核验未通过（{safe_code}），共享 APP 登录会独立核对，无需因此重新获取短信。',
+                              authentication=code in {'401', '403'}, code=safe_code)
 
 
 def cookie_parameters(value: str) -> dict[str, str]:
@@ -64,7 +73,8 @@ def exchange_cookie(value: str) -> str:
             allow_redirects=False,
         )
         if response.status_code != 200:
-            raise LingxiError(f"登录服务返回 HTTP {response.status_code}。")
+            raise LingxiError(f"灵犀换票服务返回 HTTP {response.status_code}，请稍后在灵犀中重试。",
+                              authentication=response.status_code in {401, 403}, code=str(response.status_code))
         try:
             result = response.json()
         except ValueError as exc:
@@ -73,9 +83,13 @@ def exchange_cookie(value: str) -> str:
             raise LingxiError("登录响应格式不正确。")
         bean = result.get("bean") or {}
         token = bean.get("authCode") if isinstance(bean, dict) else None
-        if str(result.get("rtnCode")) != "0" or not isinstance(token, str) or not token:
-            code = str(result.get("rtnCode", "unknown"))[:60]
-            raise LingxiError(f"APP 登录信息未被接受（{code}），请更新完整的登录信息。", authentication=True)
+        if str(result.get("rtnCode")) != "0":
+            code = str(result.get("rtnCode", "unknown"))
+            safe_code = code if re.fullmatch(r'[A-Za-z0-9_-]{1,32}', code) else 'unknown'
+            raise LingxiError(f"灵犀换票服务未接受当前会话（{safe_code}），请稍后在灵犀中重连；共享 APP 登录会独立核对。",
+                              authentication=True, code=safe_code)
+        if not isinstance(token, str) or not token:
+            raise LingxiError('灵犀换票响应缺少可验证会话，请稍后重试。', code='UPSTREAM_FORMAT')
         return token
 
 
@@ -139,9 +153,12 @@ class Account:
     app_profile: dict = field(default_factory=dict, repr=False)
     lock: Lock = field(default_factory=Lock, repr=False)
 
-    def clear(self):
+    def clear_lingxi(self):
         self.auth_code = ""
         self.verified = False
+
+    def clear(self):
+        self.clear_lingxi()
         self.session_id = secrets.token_hex(16)
         self.device_model = ""
         self.app_cookie = self.app_phone = ""
@@ -203,8 +220,8 @@ def chat(account: Account, message: str, *, before_send=None) -> Iterator[dict]:
                 stream=True,
             )
             if response.status_code in (401, 403):
-                account.clear()
-                raise LingxiError("登录信息已失效，请重新登录。", authentication=True)
+                account.clear_lingxi()
+                raise LingxiError("灵犀会话已失效，可使用现有共享账号重新连接。", authentication=True)
             if response.status_code != 200:
                 raise LingxiError(f"聊天服务返回 HTTP {response.status_code}。")
             if "text/event-stream" not in response.headers.get("content-type", "").lower():
@@ -221,8 +238,8 @@ def chat(account: Account, message: str, *, before_send=None) -> Iterator[dict]:
                     raise LingxiError("聊天回复格式不正确。")
                 code = item.get("code")
                 if str(code) in ("401", "403"):
-                    account.clear()
-                    raise LingxiError("灵犀鉴权失败，请更新登录凭据。", authentication=True)
+                    account.clear_lingxi()
+                    raise LingxiError("灵犀会话未通过鉴权，可重新连接此共享账号。", authentication=True)
                 if str(code) != "0":
                     raise LingxiError(f"灵犀返回错误（{str(code)[:60]}）。")
                 account.verified = True

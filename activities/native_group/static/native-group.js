@@ -7,7 +7,7 @@
   function feedback(message,error=false){text('ng-feedback',message);el('ng-feedback').hidden=!message;el('ng-feedback').classList.toggle('error',error);}
   async function call(path,payload){
     const response=await fetch(root+path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const data=await response.json();if(!response.ok)throw new Error(data.error||'请求失败');return data;
+    const data=await response.json();if(!response.ok)throw new Error((data.error||'请求失败')+(data.upstream_status?`（返回码 ${data.code}，HTTP ${data.upstream_status}）`:''));return data;
   }
   const current=()=>model?.accounts.find(a=>a.id===selected);
   const requiresAuthorization=member=>member?.osType!=='ios';
@@ -43,9 +43,11 @@
     const awardState=String(campaign?.groupPrizeBtnStatus), award=account?.auto_claim;
     const allDone=awardReady(state), detailsDone=members.every(memberTasksDone);
     const claiming=account?.pending?.kind==='claim';
+    const retryBlocked=account?.status!=='active'?'请先恢复此账号的登录。':account?.pending?'上次提交尚待核对，不能重复领取。':busy||account?.running?'当前账号正在核对，完成后可重试。':model.campaign.ended?'活动已到期。':!allDone?'当前官方状态尚未开放领奖，请刷新核对队伍进度和奖励状态。':'';
+    const failureDetail=award?.message+(award?.code?`（返回码 ${award.code}${award.upstream_status?`，HTTP ${award.upstream_status}`:''}）`:'');
     text('ng-claim',claiming?'领取待核对':({'0':'奖品已领完','2':'组队奖励已领取','3':'组队奖励已使用','4':'组队奖励已过期'})[awardState]|| (award?.state==='failed'?'重试领取奖励':allDone?'立即领取奖励':model.auto_claim_enabled?'自动领取组队奖励':'领取组队奖励'));
     el('ng-claim').disabled=account?.status!=='active'||!!account?.pending||busy||model.campaign.ended||awardState!=='1'||!allDone||!!account?.running;
-    if(autoClaimNote)autoClaimNote.textContent=claiming?'组队奖励已提交，后台只核对结果，不会重复领取。':['2','3','4'].includes(awardState)?'官方已确认组队奖励领取。':award?.state==='failed'?`自动领取未完成：${award.message} 可点击上方按钮主动重试。`:model.auto_claim_enabled?(allDone&&!detailsDone?'官方已确认全队达标，部分任务明细待更新，后台将自动领取。':'已开启自动领取：满员且全员完成任务后，后台自动为各账号领取并核对。'):'当前服务尚未加载自动领取，请重启工具台。';
+    if(autoClaimNote)autoClaimNote.textContent=claiming?'组队奖励已提交，后台只核对结果，不会重复领取。':['2','3','4'].includes(awardState)?'官方已确认组队奖励领取。':award?.state==='failed'?`领取未完成：${failureDetail} ${retryBlocked||'当前可点击上方按钮主动重试，程序会先核对最新官方状态。'}`:model.auto_claim_enabled?(allDone&&!detailsDone?'官方已确认全队达标，部分任务明细待更新，后台将自动领取。':'已开启自动领取：满员且全员完成任务后，后台自动为各账号领取并核对。'):'当前服务尚未加载自动领取，请重启工具台。';
     text('ng-member-count',members.length);text('ng-team-size',`队伍目标 ${group?.groupSize||'—'} 人`);
     text('ng-done-count',members.filter(memberTasksDone).length);
     el('ng-members').replaceChildren(...members.map(member=>{const row=document.createElement('tr');row.append(node('td',member.phone),node('td',!requiresAuthorization(member)?'无需此项（iOS）':String(member.authTaskStatus)==='1'?'已完成':'待官方确认'),node('td',String(member.callTaskStatus)==='1'?'已完成':'尚未完成'));return row;}));
@@ -62,7 +64,7 @@
     el('ng-tasks').replaceChildren(...(state?.tasks||[]).map(task=>{const item=node('li','');item.append(node('strong',task.title),node('small',`${task.subtitle} · ${task.status===1?'官方已完成':'尚未完成'}`));return item;}));
     el('ng-prizes').replaceChildren(...(state?.prizes?.length?state.prizes.map(prize=>{const item=node('li','');item.append(node('strong',prize.prizeName||'官方奖品'),node('small',`${prize.time||''} · ${{0:'已使用',1:'可使用',2:'已过期'}[prize.status]||'以官方状态为准'}`));return item;}):[node('li',state?'官方暂无奖品记录。':'查询后显示官方奖品记录。')]));
     text('ng-rules',model.rules||'查询后读取官方规则。');text('ng-checked',state?`最近核对 ${state.checked_at.replace('T',' ').slice(0,19)}`:'');
-    el('ng-records').replaceChildren(...(account?.records||[]).map(record=>node('li',`${record.at.replace('T',' ').slice(0,19)} · ${record.message}`)));
+    el('ng-records').replaceChildren(...(account?.records||[]).map(record=>node('li',`${record.at.replace('T',' ').slice(0,19)} · ${record.message}${record.code?`（返回码 ${record.code}${record.upstream_status?`，HTTP ${record.upstream_status}`:''}）`:''}`)));
     el('ng-refresh').disabled=!selected;el('ng-plan').disabled=busy;
     renderPhoneCall();
   }

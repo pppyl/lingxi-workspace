@@ -57,7 +57,8 @@ def register(app, credentials, accounts, storage):
 
     @blueprint.errorhandler(CheckinError)
     def error(error):
-        return jsonify(error=clean(error), code=error.code, uncertain=error.uncertain), error.status
+        return jsonify(error=clean(error), code=error.code, uncertain=error.uncertain,
+                       upstream_status=getattr(error, 'upstream_status', None)), error.status
 
     @blueprint.get('/native-group')
     def page():

@@ -247,7 +247,7 @@ if (isManager) {
       clearLoginSlider();
       if(relogging)setRelogin();
       else byId('manager-login-form').reset();
-      portalFeedback(relogging ? result.message : '账号已加入，灵犀和周三充值日均可选择使用。', true);
+      portalFeedback(result.message || '账号已加入共享账号池。', true);
       window.publishAccountsChanged(); onLogin?.(result.account); await refreshPool();
     });
   });

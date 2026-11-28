@@ -31,7 +31,7 @@ function openAccountManager({reloginId = '', focusId = '', message = ''} = {}) {
         if (!response.ok) throw new Error('账号管理加载失败，请刷新页面重试。');
         return response.text();
       }),
-      import('/static/portal-controller.js'),
+      import('/static/portal-controller.js?v=app-login-independent-1'),
     ]).then(([html, {mountPortal}]) => {
       const root = new DOMParser().parseFromString(html, 'text/html').querySelector('.account-shell');
       const header = root.querySelector('.portal-header');

@@ -29,6 +29,7 @@ class SavedLogin:
         return {'id': self.id, 'name': self.name, 'phone_masked': self.phone[:3] + '****' + self.phone[-4:],
                 'logged_in': self.status != 'login_required', 'created_at': self.created_at,
                 'status': self.status, 'checked_at': self.checked_at, 'message': self.message,
+                'lingxi_ready': bool(self.token),
                 'credential_revision': self.credential_revision}
 
 

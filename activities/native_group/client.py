@@ -88,9 +88,11 @@ class NativeGroupClient(CheckinClient):
             raise error
         if str(value.get('code')) != '0':
             code = str(value.get('code') or 'UPSTREAM_REJECTED')
+            code = code if re.fullmatch(r'[A-Za-z0-9_-]{1,60}', code) else 'UPSTREAM_REJECTED'
             error = CheckinError(MESSAGES.get(code, str(value.get('msg') or '官方未允许本次操作')[:300]),
                                 code, 409, uncertain=path == 'doDraw')
             error.definitive_rejection = writing and path != 'doDraw'
+            error.upstream_status = response.status_code
             raise error
         return value.get('data')
 

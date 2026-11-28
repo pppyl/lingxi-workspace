@@ -98,14 +98,14 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                                  app_phone=saved.phone, app_profile=dict(saved.profile))
                 chat_states[key] = target
             target = chat_states[key]
-            target.app_cookie, target.app_profile = saved.cookie, dict(saved.profile)
+            target.app_cookie, target.app_phone, target.app_profile = saved.cookie, saved.phone, dict(saved.profile)
             target.auth_code, target.verified = saved.token, bool(saved.token)
             return target
 
     def apply_login(current, record):
         target = state_for(record)
         # Updating credentials never resets this phone's conversation session.
-        target.auth_code, target.verified = record.token, True
+        target.auth_code, target.verified = record.token, bool(record.token)
         target.app_cookie, target.app_phone = record.cookie, record.phone
         target.app_profile = dict(record.profile)
         with accounts_lock:
@@ -160,8 +160,9 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
             refresh_app_credentials(saved,force=refresh)
         with accounts_lock:
             token_lock = lingxi_auth_locks.setdefault(saved.id,RLock())
-        for attempt in range(2):
-            retry = False
+        # Repeat only if another request rotated the input credentials while
+        # Lingxi was checking them; a Lingxi failure never forces APP renewal.
+        for _ in range(2):
             with token_lock:
                 snapshot = unified.credentials(saved.id)
                 if snapshot is None:
@@ -169,6 +170,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 revision = snapshot['credential_revision']
                 with unified.lock:
                     token = saved.token
+                needs_check = not token or refresh or time.time()-saved.app_context.get('lingxi_verified_at',0) >= 600
+                if needs_check and not refresh and saved.app_context.get('lingxi_retry_at',0) > time.time():
+                    raise LingxiError(saved.app_context.get('lingxi_error_message') or '灵犀会话正在等待重连，其他功能可继续使用。',
+                                      code=saved.app_context.get('lingxi_error_code', 'LINGXI_PENDING'))
                 try:
                     if not token:
                         token = exchange_cookie(snapshot['cookie'])
@@ -180,38 +185,52 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                         except LingxiError as exc:
                             if not exc.authentication:
                                 raise
+                            with unified.lock:
+                                if unified.get(saved.phone) is saved and saved.token == token:
+                                    saved.token = ''
+                                    saved.app_context['lingxi_verified_at'] = 0
+                                    unified.save()
                             token = exchange_cookie(snapshot['cookie'])
                             verify_token(token)
                         verified_at = time.time()
                     else:
                         verified_at = saved.app_context.get('lingxi_verified_at',0)
-                except LingxiError as exc:
-                    if exc.authentication and attempt == 0 and not refresh:
-                        retry = True
-                    else:
-                        unified.mark(saved,'active','灵犀会话将在使用时重连，其他功能可继续使用',expected_revision=revision)
-                        raise
-                if not retry:
+                except (LingxiError, RequestException) as exc:
                     with unified.lock:
-                        if unified.get(saved.phone) is not saved:
-                            raise AppCredentialError('账号已退出。',login_required=True)
-                        if saved.credential_revision != revision:
+                        if unified.get(saved.phone) is saved and saved.credential_revision != revision:
                             continue
-                        changed = saved.token != token
-                        saved.token = token
-                        changed = changed or saved.app_context.get('lingxi_verified_at') != verified_at
-                        saved.app_context['lingxi_verified_at'] = verified_at
-                        unified.mark(saved,'active','APP 会话已维护，业务使用最新凭据',expected_revision=revision)
-                        if changed:
+                        if unified.get(saved.phone) is saved and saved.credential_revision == revision:
+                            saved.app_context.update(lingxi_retry_at=time.time()+60,
+                                lingxi_error_code=exc.code if isinstance(exc,LingxiError) else 'NETWORK',
+                                lingxi_error_message=str(exc) if isinstance(exc,LingxiError) else '灵犀服务连接暂未完成，请稍后重试。')
+                            unified.mark(saved,'active','APP 登录有效；灵犀暂未就绪，其他功能可继续使用',expected_revision=revision)
                             unified.save()
                     sync_chat_credentials(saved)
-                    return
-            if retry:
-                refresh_app_credentials(saved,force=True)
+                    raise
+                with unified.lock:
+                    if unified.get(saved.phone) is not saved:
+                        raise AppCredentialError('账号已退出。',login_required=True)
+                    if saved.credential_revision != revision:
+                        continue
+                    changed = saved.token != token
+                    saved.token = token
+                    changed = changed or saved.app_context.get('lingxi_verified_at') != verified_at
+                    saved.app_context['lingxi_verified_at'] = verified_at
+                    for key in ('lingxi_retry_at', 'lingxi_error_code', 'lingxi_error_message'):
+                        changed = changed or key in saved.app_context
+                        saved.app_context.pop(key, None)
+                    unified.mark(saved,'active','APP 会话已维护，业务使用最新凭据',expected_revision=revision)
+                    if changed:
+                        unified.save()
+                sync_chat_credentials(saved)
+                return
         raise AppCredentialError('账号凭据更新中，请稍后重试。')
 
     def reuse_login(current, saved, activate=True):
-        ensure_token(saved)
+        if activate:
+            ensure_token(saved)
+        elif saved.app_context.get('device_id'):
+            refresh_app_credentials(saved)
         return apply_login(current, saved) if activate else current
 
     def request_chat_account():
@@ -684,8 +703,7 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if not held_lock.acquire(blocking=False):
             return jsonify(error='这个账号正在接收回复，请稍后切换。'), 409
         try:
-            with unified.phone_lock(saved.phone):
-                current = reuse_login(current, saved)
+            current = reuse_login(current, saved)
             return jsonify(**current.status(), login_id=saved.id)
         except (LingxiError,AppLoginError) as exc:
             return jsonify(error=str(exc)), 400
@@ -782,6 +800,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         held_lock = login_operation_lock(current, manage)
         if not held_lock.acquire(blocking=False):
             return jsonify(error="正在登录或接收回复，请稍候。"), 409
+        flow = None
+        lingxi_warning = ''
         try:
             with unified.phone_lock(phone):
                 saved = unified.get(phone)
@@ -791,7 +811,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                 if saved and app_verification_busy(saved.id, relogin=bool(relogin and reauthenticate)):
                     return jsonify(error='该账号正在用券或业务退订验证中，请完成后再重新登录。', code='ACCOUNT_BUSY'), 409
                 if saved and not reauthenticate:
-                    current = reuse_login(current, saved, activate=not manage)
+                    if manage:
+                        current = reuse_login(current, saved, activate=False)
                 else:
                     with unified.lock:
                         pending = unified.pending.get(phone)
@@ -805,25 +826,36 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                     slider_token = value.get('slider_token')
                     cookie = (flow.login(phone, code, slider_token=slider_token) if slider_token
                               else flow.login(phone, code))
-                    token = ''
-                    if features.enabled('lingxi'):
-                        from workspace.feature_runtime import FeatureLease, feature_scope
-                        with feature_scope(FeatureLease(features, 'lingxi')):
-                            token = exchange_cookie(cookie)
-                            verify_token(token)
                     profile = dict(flow.user_info) if isinstance(flow.user_info, dict) else {}
                     context = flow.export_context()
-                    saved = unified.remember(phone, cookie, profile, token, name.strip(),
-                                             app_context=context if isinstance(context,dict) else None)
+                    with unified.lock:
+                        previous_context = saved.app_context if saved else {}
+                        if isinstance(context, dict):
+                            context = {**{key: value for key, value in previous_context.items() if key.startswith('lingxi_')},
+                                       **context}
+                        saved = unified.remember(phone, cookie, profile, saved.token if saved else '', name.strip(),
+                                                 app_context=context if isinstance(context,dict) else None)
+                    sync_chat_credentials(saved)
                     app.extensions['session_maintenance'].due.pop(saved.id, None)
                     platforms.login_restored(saved.id)
                     if restored := app.extensions.get('net_age_surprise_login_restored'):
                         restored(saved.id)
-                    if not manage:
-                        current = apply_login(current, saved)
+            if not manage:
+                try:
+                    current = reuse_login(current, saved)
+                except (LingxiError, RequestException) as exc:
+                    current = apply_login(current, saved)
+                    lingxi_warning = ('APP 登录已成功并保存；灵犀暂未就绪，其他功能可继续使用。' +
+                                      (str(exc) if isinstance(exc, LingxiError) else '灵犀网络连接暂未完成，请稍后重试。'))
             with accounts_lock:
                 login_flows.pop(session["sid"], None)
-            return jsonify(account=saved.public(), message='账号已重新登录，任务绑定和备注已保留' if relogin else '账号已加入共享账号池') if manage else jsonify(**current.status(), login_id=saved.id)
+            if manage:
+                message = '账号已重新登录，任务绑定和备注已保留。' if relogin else '账号已加入共享账号池。'
+                if features.enabled('lingxi') and not saved.token:
+                    message += '灵犀将在使用时独立连接，不影响其他功能。'
+                return jsonify(account=saved.public(), message=message, app_logged_in=True, lingxi_ready=bool(saved.token))
+            return jsonify(**current.status(), login_id=saved.id, app_logged_in=True,
+                           lingxi_ready=bool(saved.token), warning=lingxi_warning)
         except AppLoginError as exc:
             result = {'error': str(exc), 'code': exc.code}
             if exc.code == SLIDER_REQUIRED_CODE and flow is not None:
@@ -832,10 +864,8 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
                     result['slider_challenge'] = {'app_id': LOGIN_SLIDER_APP_ID,
                                                   'device_path': LOGIN_SLIDER_DEVICE_PATH}
             return jsonify(result), 400
-        except LingxiError as exc:
-            return jsonify(error=str(exc)), 400
         except RequestException:
-            return jsonify(error="连接灵犀登录服务失败，请稍后重试。"), 502
+            return jsonify(error="连接登录服务失败，请稍后重试。"), 502
         finally:
             held_lock.release()
 
@@ -858,12 +888,17 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         if saved is None:
             return jsonify(error='账号已退出，请重新登录。'), 400
         try:
-            with unified.phone_lock(saved.phone):
-                if not features.enabled('lingxi'):
-                    refresh_app_credentials(saved,force=True)
-                ensure_token(saved,refresh=True)
-                restore_activity_sessions(saved)
-            return jsonify(account=saved.public(), message='登录态有效，关联活动会话已恢复')
+            warning = ''
+            if not features.enabled('lingxi'):
+                refresh_app_credentials(saved,force=True)
+            else:
+                try:
+                    ensure_token(saved,refresh=True)
+                except (LingxiError, RequestException) as exc:
+                    warning = str(exc) if isinstance(exc, LingxiError) else '灵犀网络连接暂未完成。'
+            restore_activity_sessions(saved)
+            return jsonify(account=saved.public(), lingxi_ready=bool(saved.token), warning=warning,
+                           message='APP 登录已核对，灵犀暂未就绪；其他关联会话已核对。'+warning if warning else '登录态有效，关联活动会话已恢复')
         except (LingxiError,AppLoginError) as exc:
             return jsonify(error=str(exc)), 400
         except RequestException:
@@ -961,10 +996,10 @@ def create_app(*, enable_recharge=False, recharge_manager=None, recharge_schedul
         saved = unified.get(current.app_phone) if current.app_phone else None
         if saved:
             try:
-                with unified.phone_lock(saved.phone):
-                    if saved.status != 'active' or time.time() - saved.checked_at > 300:
-                        ensure_token(saved)
-                    current.auth_code, current.verified = saved.token, True
+                if not saved.token or saved.status != 'active' or time.time() - saved.checked_at > 300:
+                    ensure_token(saved)
+                with unified.lock:
+                    current.auth_code, current.verified = saved.token, bool(saved.token)
                     current.app_cookie, current.app_profile = saved.cookie, dict(saved.profile)
             except AppLoginError as exc:
                 return jsonify(error=str(exc)), 401 if isinstance(exc,AppCredentialError) and exc.login_required else 502
