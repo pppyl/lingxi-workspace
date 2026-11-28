@@ -68,6 +68,7 @@ def main():
     shutil.copy2(ROOT/'docs/DESKTOP.md',package/'使用说明.txt')
     shutil.copy2(ROOT/'THIRD_PARTY_NOTICES.md',package/'THIRD_PARTY_NOTICES.md')
     shutil.copy2(ROOT/'build_tools/allow-lan.ps1',package/'allow-lan.ps1')
+    shutil.copy2(ROOT/'build_tools/diagnose_windows_startup.ps1',package/'diagnose_windows_startup.ps1')
     release=ROOT/'release';release.mkdir(exist_ok=True)
     archive=release/f'LingxiWorkspace-{VERSION}-Windows-x64.zip'
     forbidden={'.local','.git','analysis','data','window-profile','browser-profile'}

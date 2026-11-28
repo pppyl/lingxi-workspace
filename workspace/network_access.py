@@ -55,6 +55,25 @@ def local_addresses():
     return [ip_address(row['address']) for row in interface_addresses()]
 
 
+def _listen(host, port):
+    family = socket.AF_INET6 if ':' in host else socket.AF_INET
+    if os.name != 'nt':
+        return socket.create_server((host, port), family=family, dualstack_ipv6=False)
+    listener = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        # Winsock otherwise allows a wildcard listener to overlap an occupied
+        # loopback address, leaving desktop requests on the original listener.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        if family == socket.AF_INET6:
+            listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        listener.bind((host, port))
+        listener.listen()
+    except OSError:
+        listener.close()
+        raise
+    return listener
+
+
 def create_http_server(application, port=None, *, fallback_if_occupied=False, on_port_changed=None):
     from waitress import create_server
     manager = getattr(application,'extensions',{}).get('network_settings') or NetworkSettings()
@@ -104,7 +123,7 @@ class ManagedHttpServer:
         try:
             sockets = self._bind(hosts,port)
         except OSError as error:
-            if not fallback_if_occupied or not port or error.errno not in (errno.EADDRINUSE,10048):raise
+            if not fallback_if_occupied or not port or error.errno not in (errno.EADDRINUSE,10048,10013):raise
             sockets = self._bind(hosts,0)
             manager.warning = f'端口 {port} 无法监听，已使用空闲端口。'
         self.backend = create_server(application,sockets=sockets,threads=32,channel_timeout=240)
@@ -119,8 +138,7 @@ class ManagedHttpServer:
         sockets = []
         try:
             for host in hosts:
-                listener = socket.create_server((host,port),family=socket.AF_INET6 if ':' in host else socket.AF_INET,
-                                                dualstack_ipv6=False)
+                listener = _listen(host, port)
                 sockets.append(listener)
                 port = listener.getsockname()[1]
         except OSError:
@@ -202,8 +220,7 @@ class ManagedHttpServer:
             if host in self.listeners:
                 continue
             try:
-                sock = socket.create_server((host,self.effective_port),family=socket.AF_INET6 if ':' in host else socket.AF_INET,
-                                            dualstack_ipv6=False)
+                sock = _listen(host, self.effective_port)
             except OSError as error:
                 errors.append(f'{host}：{error}')
                 continue

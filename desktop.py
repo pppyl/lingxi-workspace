@@ -10,11 +10,15 @@ import msvcrt
 import os
 from pathlib import Path
 import secrets
+import sys
 import threading
 from urllib.request import Request,ProxyHandler,build_opener
 
+startup_log_path=None
+
 
 def main():
+    global startup_log_path
     parser=argparse.ArgumentParser()
     parser.add_argument('--data-dir',type=Path)
     parser.add_argument('--port',type=int)
@@ -25,8 +29,13 @@ def main():
     options=parser.parse_args()
     if options.data_dir:os.environ['LINGXI_DATA_DIR']=str(options.data_dir.resolve())
     from runtime_paths import ROOT,DATA_DIR,VERSION,prepare_runtime_data
-    if not options.quit:prepare_runtime_data()
     DATA_DIR.mkdir(parents=True,exist_ok=True)
+    handler=RotatingFileHandler(DATA_DIR/'desktop.log',maxBytes=2*1024*1024,backupCount=2,encoding='utf-8')
+    logging.basicConfig(handlers=[handler],level=logging.WARNING)
+    startup_log_path=DATA_DIR/'desktop.log'
+    logger=logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    logger.info('Desktop startup: version=%s; executable=%s; data=%s',VERSION,sys.executable,DATA_DIR)
     control_file=DATA_DIR/'desktop-instance.json'
 
     def running_command(command):
@@ -47,8 +56,7 @@ def main():
             return
         if options.open_browser:running_command('open')
         return
-    handler=RotatingFileHandler(DATA_DIR/'desktop.log',maxBytes=2*1024*1024,backupCount=2,encoding='utf-8')
-    logging.basicConfig(handlers=[handler],level=logging.WARNING)
+    prepare_runtime_data()
     from app import app
     app.config['SESSION_COOKIE_NAME']='lingxi_desktop_session'
     app.extensions['recharge_app'].config['SESSION_COOKIE_NAME']='lingxi_desktop_recharge_session'
@@ -113,18 +121,18 @@ def main():
 
     instance={'pid':os.getpid(),'port':port,'token':token,'version':VERSION}
     control_file.write_text(json.dumps(instance),'utf-8')
-    threading.Thread(target=server.run,daemon=True,name='desktop-http').start()
-    wait_for_page(url)
-    app.extensions['update_checker'].start()
-    app.extensions['session_maintenance'].start()
-    app.extensions['lingxi_scheduler'].start()
-    app.extensions['checkin_scheduler'].start()
-    app.extensions['monthly_coupon_scheduler'].start()
-    app.extensions['star_day_scheduler'].start()
-    app.extensions['net_age_surprise_scheduler'].start()
-    app.extensions['platform_manager'].start()
-    app.extensions['recharge_app'].extensions['scheduler'].start()
     try:
+        threading.Thread(target=server.run,daemon=True,name='desktop-http').start()
+        wait_for_page(f'http://127.0.0.1:{port}/_desktop/info')
+        app.extensions['update_checker'].start()
+        app.extensions['session_maintenance'].start()
+        app.extensions['lingxi_scheduler'].start()
+        app.extensions['checkin_scheduler'].start()
+        app.extensions['monthly_coupon_scheduler'].start()
+        app.extensions['star_day_scheduler'].start()
+        app.extensions['net_age_surprise_scheduler'].start()
+        app.extensions['platform_manager'].start()
+        app.extensions['recharge_app'].extensions['scheduler'].start()
         if options.headless:quit_event.wait()
         else:
             if options.open_browser:open_window()
@@ -156,8 +164,10 @@ def main():
 
 if __name__=='__main__':
     try:main()
-    except Exception:
+    except Exception as error:
         logging.exception('Desktop startup or shutdown failed')
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(None,'客户端启动失败。请完整解压发布包，并查看数据目录中的 desktop.log。',
-            '本地工具台',0x10)
+        detail=f'{type(error).__name__}: {error}'
+        message='客户端运行失败。\n\n'+detail[:600]
+        message+=('\n\n完整错误日志：'+str(startup_log_path) if startup_log_path else '\n\n错误发生在日志文件创建前。')
+        ctypes.windll.user32.MessageBoxW(None,message,'本地工具台',0x10)
+        raise SystemExit(1)

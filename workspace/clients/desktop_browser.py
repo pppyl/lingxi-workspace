@@ -4,7 +4,7 @@ import ctypes
 from ctypes import wintypes
 import threading
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError,URLError
 from urllib.request import ProxyHandler,build_opener
 import webbrowser
 
@@ -36,13 +36,21 @@ def wait_for_page(url,timeout=15):
     # This probes our own loopback server, never the user's upstream proxy.
     opener=build_opener(ProxyHandler({}))
     deadline=time.monotonic()+timeout
+    last_error=None
+    detail='未收到有效响应'
     while time.monotonic()<deadline:
         try:
             with opener.open(url,timeout=1) as response:
-                if response.status==200 and response.read(512):return
-        except (URLError,OSError):pass
+                body=response.read(512)
+                if response.status==200 and body:return
+                detail=f'HTTP {response.status}，响应为空' if not body else f'HTTP {response.status}'
+                last_error=None
+        except (URLError,OSError) as error:
+            last_error=error
+            detail=f'{type(error).__name__}: {error}'
+            if isinstance(error,HTTPError):error.close()
         time.sleep(.05)
-    raise RuntimeError('本地页面未能启动，请查看 desktop.log。')
+    raise RuntimeError(f'本地服务启动检查超时：{url}；{detail}。请查看 desktop.log。') from last_error
 
 
 class DefaultBrowserWindow:
